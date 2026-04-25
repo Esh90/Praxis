@@ -1,0 +1,4 @@
+project_id = "praxis"
+
+[functions.generate-praxis-plan]
+verify_jwt = false
