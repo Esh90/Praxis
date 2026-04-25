@@ -1,0 +1,217 @@
+{
+  "version": "1.0.0",
+  "disclaimer": "Prices are approximate 2024 academic pricing in USD. Verify before ordering.",
+  "reagents": [
+    {
+      "name": "DMSO (Dimethyl sulfoxide)",
+      "supplier": "Sigma-Aldrich",
+      "catalog_number": "D2650-100ML",
+      "unit": "100mL",
+      "price_usd": 28
+    },
+    {
+      "name": "PBS (Phosphate Buffered Saline) 10x",
+      "supplier": "Thermo Fisher",
+      "catalog_number": "70011044",
+      "unit": "500mL",
+      "price_usd": 24
+    },
+    {
+      "name": "FITC-Dextran 4kDa",
+      "supplier": "Sigma-Aldrich",
+      "catalog_number": "FD4-1G",
+      "unit": "1g",
+      "price_usd": 185
+    },
+    {
+      "name": "FITC-Dextran 40kDa",
+      "supplier": "Sigma-Aldrich",
+      "catalog_number": "FD40S-1G",
+      "unit": "1g",
+      "price_usd": 195
+    },
+    {
+      "name": "Trypan Blue Solution 0.4%",
+      "supplier": "Thermo Fisher",
+      "catalog_number": "15250061",
+      "unit": "100mL",
+      "price_usd": 32
+    },
+    {
+      "name": "HeLa cells (CCL-2)",
+      "supplier": "ATCC",
+      "catalog_number": "CCL-2",
+      "unit": "vial",
+      "price_usd": 435
+    },
+    {
+      "name": "C57BL/6 mice (8-week-old male)",
+      "supplier": "Jackson Laboratory",
+      "catalog_number": "000664",
+      "unit": "per animal",
+      "price_usd": 38
+    },
+    {
+      "name": "Lactobacillus rhamnosus GG (ATCC 53103)",
+      "supplier": "ATCC",
+      "catalog_number": "53103",
+      "unit": "vial",
+      "price_usd": 320
+    },
+    {
+      "name": "Trehalose dihydrate",
+      "supplier": "Sigma-Aldrich",
+      "catalog_number": "T9531-100G",
+      "unit": "100g",
+      "price_usd": 42
+    },
+    {
+      "name": "DMEM High Glucose",
+      "supplier": "Thermo Fisher",
+      "catalog_number": "11965092",
+      "unit": "500mL",
+      "price_usd": 38
+    },
+    {
+      "name": "Fetal Bovine Serum (FBS)",
+      "supplier": "Thermo Fisher",
+      "catalog_number": "16000044",
+      "unit": "500mL",
+      "price_usd": 285
+    },
+    {
+      "name": "Penicillin-Streptomycin",
+      "supplier": "Thermo Fisher",
+      "catalog_number": "15140122",
+      "unit": "100mL",
+      "price_usd": 52
+    },
+    {
+      "name": "Trypsin-EDTA 0.25%",
+      "supplier": "Thermo Fisher",
+      "catalog_number": "25200056",
+      "unit": "100mL",
+      "price_usd": 47
+    },
+    {
+      "name": "CRP Human ELISA Kit",
+      "supplier": "Abcam",
+      "catalog_number": "ab99995",
+      "unit": "96 tests",
+      "price_usd": 528
+    },
+    {
+      "name": "Anti-CRP antibody (rabbit polyclonal)",
+      "supplier": "Abcam",
+      "catalog_number": "ab27029",
+      "unit": "100µg",
+      "price_usd": 285
+    },
+    {
+      "name": "Anti-Claudin-1 antibody",
+      "supplier": "Abcam",
+      "catalog_number": "ab15098",
+      "unit": "100µg",
+      "price_usd": 340
+    },
+    {
+      "name": "Anti-Occludin antibody",
+      "supplier": "Abcam",
+      "catalog_number": "ab31721",
+      "unit": "100µg",
+      "price_usd": 340
+    },
+    {
+      "name": "Liquid Nitrogen (Dewar access)",
+      "supplier": "Facility",
+      "catalog_number": "N/A",
+      "unit": "per session",
+      "price_usd": 45
+    },
+    {
+      "name": "Nitrocellulose membrane",
+      "supplier": "Sigma-Aldrich",
+      "catalog_number": "WHA10401180",
+      "unit": "100 sheets",
+      "price_usd": 125
+    },
+    {
+      "name": "Carbon paper electrode (2x3cm)",
+      "supplier": "Sigma-Aldrich",
+      "catalog_number": "749761-25EA",
+      "unit": "25 sheets",
+      "price_usd": 89
+    },
+    {
+      "name": "Acetate buffer 1M pH 5.0",
+      "supplier": "Sigma-Aldrich",
+      "catalog_number": "A6283-500ML",
+      "unit": "500mL",
+      "price_usd": 36
+    },
+    {
+      "name": "Sporomusa ovata (DSM 2662)",
+      "supplier": "DSMZ",
+      "catalog_number": "DSM-2662",
+      "unit": "vial",
+      "price_usd": 265
+    },
+    {
+      "name": "CO2 gas cylinder (research grade)",
+      "supplier": "Local supplier",
+      "catalog_number": "SITE-SPECIFIC",
+      "unit": "per cylinder",
+      "price_usd": 85
+    },
+    {
+      "name": "RNase-free water",
+      "supplier": "Thermo Fisher",
+      "catalog_number": "10977015",
+      "unit": "500mL",
+      "price_usd": 18
+    },
+    {
+      "name": "Ethanol absolute (200 proof)",
+      "supplier": "Sigma-Aldrich",
+      "catalog_number": "459836-1L",
+      "unit": "1L",
+      "price_usd": 65
+    },
+    {
+      "name": "Bradford Protein Assay reagent",
+      "supplier": "Bio-Rad",
+      "catalog_number": "5000006",
+      "unit": "450mL",
+      "price_usd": 98
+    },
+    {
+      "name": "96-well flat bottom plate",
+      "supplier": "Corning",
+      "catalog_number": "3596",
+      "unit": "case of 50",
+      "price_usd": 145
+    },
+    {
+      "name": "Microcentrifuge tubes 1.5mL (500 pack)",
+      "supplier": "Eppendorf",
+      "catalog_number": "022363204",
+      "unit": "500 tubes",
+      "price_usd": 42
+    },
+    {
+      "name": "Nitrile gloves (medium, 100 pack)",
+      "supplier": "VWR",
+      "catalog_number": "89038-350",
+      "unit": "100 gloves",
+      "price_usd": 18
+    },
+    {
+      "name": "Laboratory notebook (hardbound)",
+      "supplier": "VWR",
+      "catalog_number": "10017-258",
+      "unit": "1 notebook",
+      "price_usd": 22
+    }
+  ]
+}
+

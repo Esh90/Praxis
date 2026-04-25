@@ -1,0 +1,29 @@
+{
+  "name": "praxis-agents",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Praxis AI agent pipeline for scientific experiment planning",
+  "main": "orchestrator.js",
+  "scripts": {
+    "test:parser": "node tests/test_agent0.js",
+    "test:qc": "node tests/test_agent1.js",
+    "test:protocol": "node tests/test_agent2.js",
+    "test:materials": "node tests/test_agent3.js",
+    "test:budget": "node tests/test_agent4.js",
+    "test:validation": "node tests/test_agent5.js",
+    "test:full": "node tests/test_full_pipeline.js",
+    "test:all": "node tests/test_agent0.js && node tests/test_agent1.js && node tests/test_agent2.js && node tests/test_agent3.js && node tests/test_agent4.js && node tests/test_agent5.js",
+    "pipeline": "node orchestrator.js"
+  },
+  "dependencies": {
+    "groq-sdk": "^0.12.0",
+    "@google/generative-ai": "^0.21.0",
+    "tavily": "^1.0.2",
+    "@xenova/transformers": "^2.17.2",
+    "zod": "^3.23.8",
+    "node-cache": "^5.1.2",
+    "dotenv": "^16.4.5",
+    "chalk": "^5.3.0",
+    "crypto": "^1.0.1"
+  }
+}

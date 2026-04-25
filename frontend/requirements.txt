@@ -1,0 +1,10 @@
+# NOTE: This repository's "frontend" is a Node.js/Bun project (Vite + React),
+# not a Python project. `pip install -r requirements.txt` is NOT used here.
+#
+# Install ONE of the following to run the app locally:
+# - Node.js >= 20 (recommended: latest LTS), which includes npm
+# - Bun >= 1.0 (faster installs; supported by this repo)
+#
+# The actual JS/TS dependencies are defined in:
+# - package.json
+# - package-lock.json (npm) and/or bun.lockb (Bun)

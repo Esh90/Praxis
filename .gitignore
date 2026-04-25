@@ -1,0 +1,47 @@
+# =========================
+# Praxis (monorepo) ignore
+# =========================
+
+# Env / secrets
+**/.env
+**/.env.*
+!.env.example
+
+# Node dependencies / build output
+**/node_modules/
+**/dist/
+**/dist-ssr/
+**/.output/
+**/.vinxi/
+**/.nitro/
+**/.tanstack/
+
+# Local caches / generated artifacts (agents)
+agents/cache/*.json
+agents/cache/*.ndjson
+agents/cache/*.log
+agents/cache/test_output.json
+
+# Wrangler / Cloudflare
+**/.wrangler/
+**/.dev.vars
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.sw?
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
