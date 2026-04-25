@@ -23,6 +23,14 @@ export function NoveltyBadge({ novelty }: { novelty: PraxisPlan["novelty"] }) {
             <span className={cn("text-xs font-mono font-semibold", cfg.color)}>{novelty.status.toUpperCase()}</span>
           </div>
           <h3 className="font-semibold">{cfg.label}</h3>
+          {(novelty.summary || novelty.confidence) && (
+            <p className="text-sm text-muted-foreground mt-2">
+              {novelty.summary ? <span>{novelty.summary}</span> : null}
+              {novelty.confidence ? (
+                <span className="ml-2 font-mono text-xs">confidence: {novelty.confidence}</span>
+              ) : null}
+            </p>
+          )}
           {novelty.references.length > 0 && (
             <ul className="mt-3 space-y-1.5">
               {novelty.references.slice(0, 3).map((r, i) => (

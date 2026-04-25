@@ -4,6 +4,9 @@ export interface PraxisPlan {
   novelty: {
     status: NoveltyStatus;
     references: { title: string; authors: string; year: number; doi: string }[];
+    confidence?: string | null;
+    summary?: string | null;
+    raw?: unknown;
   };
   protocol: { step: number; title: string; description: string; duration_min: number }[];
   materials: { name: string; category: string; supplier: string; catalog: string; cost: number; quantity: number; unit: string }[];
@@ -22,7 +25,15 @@ export interface PraxisPlan {
     controls: string[];
     risks: { risk: string; mitigation: string }[];
   };
-  meta: { hypothesis: string; domain: string; generated_at: string };
+  meta: {
+    plan_id?: string | null;
+    hypothesis: string;
+    domain: string;
+    experiment_type?: string;
+    generated_at: string;
+    duration_ms?: number | null;
+    pipeline_errors?: number;
+  };
 }
 
 export const DOMAINS = ["Diagnostics", "Gut Health", "Cell Biology", "Climate"] as const;

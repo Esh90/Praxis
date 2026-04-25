@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { embed, cosineSimilarity } from './embedder.js';
+import { embed } from './embedder.js';
+import { getDbRelevantFeedback, mergeFeedback, scoreLocalFeedback } from './supabaseFeedback.js';
 
 const STORE_PATH = path.join(process.cwd(), 'cache', 'feedback_store.json');
 
@@ -48,25 +49,21 @@ export async function addFeedback(feedback) {
  */
 export async function getRelevantFeedback(hypothesisText, domain, section, topN = 3) {
   const store = loadStore();
-  if (store.length === 0) return [];
 
   // Filter by section and domain first
   const relevant = store.filter(
     (f) => f.section === section && (f.domain === domain || !f.domain) && f.rating <= 3, // only pull corrections for low-rated outputs
   );
 
-  if (relevant.length === 0) return [];
+  const db = await getDbRelevantFeedback(hypothesisText, domain, section, topN);
 
-  // Embed the current hypothesis and find similar past corrections
-  const queryEmbedding = await embed(`${section} ${hypothesisText}`);
+  if (relevant.length === 0) {
+    return db.slice(0, topN);
+  }
 
-  const scored = relevant.map((f) => ({
-    ...f,
-    similarity: cosineSimilarity(queryEmbedding, f.embedding),
-  }));
-
-  scored.sort((a, b) => b.similarity - a.similarity);
-  return scored.slice(0, topN);
+  const scoredLocal = await scoreLocalFeedback(relevant, hypothesisText, domain, section);
+  const merged = await mergeFeedback(scoredLocal, db);
+  return merged.slice(0, topN);
 }
 
 /**

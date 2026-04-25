@@ -1,8 +1,20 @@
-import type { PraxisPlan } from "@/lib/praxis-types";
+import type { Domain, PraxisPlan } from "@/lib/praxis-types";
 import { ReviewControls } from "./ReviewControls";
 import { Clock } from "lucide-react";
 
-export function ProtocolView({ steps, reviewMode }: { steps: PraxisPlan["protocol"]; reviewMode: boolean }) {
+export function ProtocolView({
+  steps,
+  reviewMode,
+  planId,
+  experimentType,
+  domainUi,
+}: {
+  steps: PraxisPlan["protocol"];
+  reviewMode: boolean;
+  planId?: string | null;
+  experimentType?: string;
+  domainUi: Domain;
+}) {
   return (
     <ol className="space-y-4">
       {steps.map((s) => (
@@ -19,7 +31,15 @@ export function ProtocolView({ steps, reviewMode }: { steps: PraxisPlan["protoco
                 </span>
               </div>
               <p className="text-sm text-muted-foreground leading-relaxed">{s.description}</p>
-              {reviewMode && <ReviewControls sectionKey={`protocol-${s.step}`} />}
+              {reviewMode && (
+                <ReviewControls
+                  section="protocol"
+                  planId={planId}
+                  experimentType={experimentType}
+                  domainUi={domainUi}
+                  originalContent={`Step ${s.step}: ${s.title}\n${s.description}\nDuration: ${s.duration_min} minutes`}
+                />
+              )}
             </div>
           </div>
         </li>
@@ -28,13 +48,26 @@ export function ProtocolView({ steps, reviewMode }: { steps: PraxisPlan["protoco
   );
 }
 
-export function BudgetView({ budget, reviewMode }: { budget: PraxisPlan["budget"]; reviewMode: boolean }) {
+export function BudgetView({
+  budget,
+  reviewMode,
+  planId,
+  experimentType,
+  domainUi,
+}: {
+  budget: PraxisPlan["budget"];
+  reviewMode: boolean;
+  planId?: string | null;
+  experimentType?: string;
+  domainUi: Domain;
+}) {
   const items = [
     { label: "Labor", value: budget.labor, color: "bg-chart-1" },
     { label: "Materials", value: budget.materials, color: "bg-chart-2" },
     { label: "Contingency", value: budget.contingency, color: "bg-chart-4" },
   ];
   const total = budget.grand_total;
+  const safeTotal = total > 0 ? total : 1;
   return (
     <div className="space-y-5">
       <div className="glass rounded-xl p-6">
@@ -44,7 +77,7 @@ export function BudgetView({ budget, reviewMode }: { budget: PraxisPlan["budget"
         </div>
         <div className="mt-5 flex h-2 rounded-full overflow-hidden">
           {items.map((it) => (
-            <div key={it.label} className={it.color} style={{ width: `${(it.value / total) * 100}%` }} />
+            <div key={it.label} className={it.color} style={{ width: `${(it.value / safeTotal) * 100}%` }} />
           ))}
         </div>
         <div className="grid grid-cols-3 gap-4 mt-5">
@@ -55,18 +88,38 @@ export function BudgetView({ budget, reviewMode }: { budget: PraxisPlan["budget"
                 <span className="text-xs text-muted-foreground">{it.label}</span>
               </div>
               <div className="font-mono font-semibold mt-1">${it.value.toLocaleString()}</div>
-              <div className="text-xs text-muted-foreground font-mono">{((it.value / total) * 100).toFixed(1)}%</div>
+              <div className="text-xs text-muted-foreground font-mono">{((it.value / safeTotal) * 100).toFixed(1)}%</div>
             </div>
           ))}
         </div>
         <p className="text-xs text-muted-foreground mt-5 italic">{budget.breakdown_notes}</p>
-        {reviewMode && <ReviewControls sectionKey="budget" />}
+        {reviewMode && (
+          <ReviewControls
+            section="budget"
+            planId={planId}
+            experimentType={experimentType}
+            domainUi={domainUi}
+            originalContent={`Budget snapshot:\nLabor: $${budget.labor}\nMaterials: $${budget.materials}\nContingency: $${budget.contingency}\nGrand total: $${budget.grand_total} ${budget.currency}\nNotes: ${budget.breakdown_notes}`}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-export function TimelineView({ timeline, reviewMode }: { timeline: PraxisPlan["timeline"]; reviewMode: boolean }) {
+export function TimelineView({
+  timeline,
+  reviewMode,
+  planId,
+  experimentType,
+  domainUi,
+}: {
+  timeline: PraxisPlan["timeline"];
+  reviewMode: boolean;
+  planId?: string | null;
+  experimentType?: string;
+  domainUi: Domain;
+}) {
   const totalWeeks = Math.max(...timeline.map((t) => t.start_week + t.weeks - 1));
   return (
     <div className="glass rounded-xl p-6 space-y-4">
@@ -92,12 +145,34 @@ export function TimelineView({ timeline, reviewMode }: { timeline: PraxisPlan["t
           );
         })}
       </div>
-      {reviewMode && <ReviewControls sectionKey="timeline" />}
+      {reviewMode && (
+        <ReviewControls
+          section="timeline"
+          planId={planId}
+          experimentType={experimentType}
+          domainUi={domainUi}
+          originalContent={`Timeline:\n${timeline
+            .map((t) => `- ${t.phase}: weeks ${t.start_week}-${t.start_week + t.weeks - 1} (${t.weeks}w)`)
+            .join("\n")}`}
+        />
+      )}
     </div>
   );
 }
 
-export function ValidationView({ validation, reviewMode }: { validation: PraxisPlan["validation"]; reviewMode: boolean }) {
+export function ValidationView({
+  validation,
+  reviewMode,
+  planId,
+  experimentType,
+  domainUi,
+}: {
+  validation: PraxisPlan["validation"];
+  reviewMode: boolean;
+  planId?: string | null;
+  experimentType?: string;
+  domainUi: Domain;
+}) {
   return (
     <div className="space-y-4">
       <div className="grid md:grid-cols-2 gap-4">
@@ -128,7 +203,17 @@ export function ValidationView({ validation, reviewMode }: { validation: PraxisP
           ))}
         </div>
       </div>
-      {reviewMode && <ReviewControls sectionKey="validation" />}
+      {reviewMode && (
+        <ReviewControls
+          section="validation"
+          planId={planId}
+          experimentType={experimentType}
+          domainUi={domainUi}
+          originalContent={`Validation plan:\nPower: ${(validation.statistical_power * 100).toFixed(0)}%\nJustification: ${validation.sample_size_justification}\nControls:\n${validation.controls
+            .map((c) => `- ${c}`)
+            .join("\n")}`}
+        />
+      )}
     </div>
   );
 }

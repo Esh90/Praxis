@@ -1,6 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -28,6 +27,10 @@ function Dashboard() {
   const [plan, setPlan] = useState<PraxisPlan | null>(null);
   const [generating, setGenerating] = useState(false);
 
+  const apiBase =
+    import.meta.env.VITE_PRAXIS_API_URL ||
+    (typeof window !== "undefined" ? `${window.location.protocol}//${window.location.hostname}:3001` : "");
+
   const generate = async () => {
     if (!hypothesis.trim()) return toast.error("Enter a hypothesis first.");
     setGenerating(true);
@@ -40,13 +43,25 @@ function Dashboard() {
     }, 700);
 
     try {
-      const { data, error } = await supabase.functions.invoke<PraxisPlan>("generate-praxis-plan", {
-        body: { hypothesis, domain },
+      const resp = await fetch(`${apiBase}/api/praxis/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hypothesis, domain }),
       });
+      const payloadUnknown: unknown = await resp.json();
       clearInterval(stepInterval);
-      if (error) throw error;
+      if (!resp.ok) {
+        const msg =
+          typeof payloadUnknown === "object" &&
+          payloadUnknown !== null &&
+          "error" in payloadUnknown &&
+          typeof (payloadUnknown as { error?: unknown }).error === "string"
+            ? (payloadUnknown as { error: string }).error
+            : `HTTP ${resp.status}`;
+        throw new Error(msg);
+      }
       setActiveStep(4);
-      setPlan(data ?? null);
+      setPlan(payloadUnknown as PraxisPlan);
       toast.success("Experiment plan ready.");
     } catch (e) {
       clearInterval(stepInterval);
@@ -166,11 +181,51 @@ function Dashboard() {
                   <TabsTrigger value="timeline"><Calendar className="size-4 mr-1.5" />Timeline</TabsTrigger>
                   <TabsTrigger value="validation"><ShieldCheck className="size-4 mr-1.5" />Validation</TabsTrigger>
                 </TabsList>
-                <TabsContent value="protocol" className="mt-6"><ProtocolView steps={plan.protocol} reviewMode={reviewMode} /></TabsContent>
-                <TabsContent value="materials" className="mt-6"><MaterialsTable materials={plan.materials} reviewMode={reviewMode} /></TabsContent>
-                <TabsContent value="budget" className="mt-6"><BudgetView budget={plan.budget} reviewMode={reviewMode} /></TabsContent>
-                <TabsContent value="timeline" className="mt-6"><TimelineView timeline={plan.timeline} reviewMode={reviewMode} /></TabsContent>
-                <TabsContent value="validation" className="mt-6"><ValidationView validation={plan.validation} reviewMode={reviewMode} /></TabsContent>
+                <TabsContent value="protocol" className="mt-6">
+                  <ProtocolView
+                    steps={plan.protocol}
+                    reviewMode={reviewMode}
+                    planId={plan.meta.plan_id}
+                    experimentType={plan.meta.experiment_type}
+                    domainUi={domain}
+                  />
+                </TabsContent>
+                <TabsContent value="materials" className="mt-6">
+                  <MaterialsTable
+                    materials={plan.materials}
+                    reviewMode={reviewMode}
+                    planId={plan.meta.plan_id}
+                    experimentType={plan.meta.experiment_type}
+                    domainUi={domain}
+                  />
+                </TabsContent>
+                <TabsContent value="budget" className="mt-6">
+                  <BudgetView
+                    budget={plan.budget}
+                    reviewMode={reviewMode}
+                    planId={plan.meta.plan_id}
+                    experimentType={plan.meta.experiment_type}
+                    domainUi={domain}
+                  />
+                </TabsContent>
+                <TabsContent value="timeline" className="mt-6">
+                  <TimelineView
+                    timeline={plan.timeline}
+                    reviewMode={reviewMode}
+                    planId={plan.meta.plan_id}
+                    experimentType={plan.meta.experiment_type}
+                    domainUi={domain}
+                  />
+                </TabsContent>
+                <TabsContent value="validation" className="mt-6">
+                  <ValidationView
+                    validation={plan.validation}
+                    reviewMode={reviewMode}
+                    planId={plan.meta.plan_id}
+                    experimentType={plan.meta.experiment_type}
+                    domainUi={domain}
+                  />
+                </TabsContent>
               </Tabs>
             </div>
           )}

@@ -1,10 +1,22 @@
 import { useState } from "react";
-import type { PraxisPlan } from "@/lib/praxis-types";
+import type { Domain, PraxisPlan } from "@/lib/praxis-types";
 import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
 import { ReviewControls } from "./ReviewControls";
 
-export function MaterialsTable({ materials, reviewMode }: { materials: PraxisPlan["materials"]; reviewMode: boolean }) {
+export function MaterialsTable({
+  materials,
+  reviewMode,
+  planId,
+  experimentType,
+  domainUi,
+}: {
+  materials: PraxisPlan["materials"];
+  reviewMode: boolean;
+  planId?: string | null;
+  experimentType?: string;
+  domainUi: Domain;
+}) {
   const [q, setQ] = useState("");
   const filtered = materials.filter((m) =>
     [m.name, m.category, m.supplier, m.catalog].some((v) => v.toLowerCase().includes(q.toLowerCase())),
@@ -56,7 +68,18 @@ export function MaterialsTable({ materials, reviewMode }: { materials: PraxisPla
       <p className="text-xs italic text-muted-foreground">
         Catalog numbers are AI-estimated. Verify before ordering.
       </p>
-      {reviewMode && <ReviewControls sectionKey="materials" />}
+      {reviewMode && (
+        <ReviewControls
+          section="materials"
+          planId={planId}
+          experimentType={experimentType}
+          domainUi={domainUi}
+          originalContent={`Materials list (filtered view):\n${filtered
+            .slice(0, 25)
+            .map((m) => `- ${m.name} | ${m.supplier} | ${m.catalog} | qty ${m.quantity} ${m.unit} | $${m.cost.toFixed(2)}`)
+            .join("\n")}`}
+        />
+      )}
     </div>
   );
 }

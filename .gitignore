@@ -7,6 +7,12 @@
 **/.env.*
 !.env.example
 
+# Common local secret dumps / keys (defense-in-depth)
+*.pem
+*.key
+**/credentials.json
+**/service-account*.json
+
 # Node dependencies / build output
 **/node_modules/
 **/dist/
@@ -21,6 +27,9 @@ agents/cache/*.json
 agents/cache/*.ndjson
 agents/cache/*.log
 agents/cache/test_output.json
+
+# Backend runtime caches (embeddings / copied feedback during local dev)
+backend/cache/
 
 # Wrangler / Cloudflare
 **/.wrangler/
