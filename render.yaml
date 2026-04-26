@@ -21,8 +21,8 @@ services:
         value: 20.18.0
       - key: NODE_ENV
         value: production
-      # Comma-separated allowlist. Replace with your real frontend URL(s)
-      # after the Cloudflare Worker deploy (Step 4 of DEPLOYMENT.md).
+      # Comma-separated allowlist. Set to your deployed frontend URL,
+      # e.g. https://praxis-mvp.<subdomain>.workers.dev
       - key: FRONTEND_ORIGIN
         sync: false
       - key: GROQ_MODEL_CANDIDATES

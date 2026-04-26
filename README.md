@@ -6,6 +6,35 @@ Praxis is an AI scientist-in-the-loop. You type a hypothesis in plain English; P
 
 Built for the **AI Scientist** challenge (Fulcrum Science × MIT Club).
 
+<p align="left">
+  <img alt="frontend" src="https://img.shields.io/badge/frontend-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white">
+  <img alt="backend" src="https://img.shields.io/badge/backend-Render-46E3B7?logo=render&logoColor=white">
+  <img alt="database" src="https://img.shields.io/badge/database-Supabase%20%2B%20pgvector-3ECF8E?logo=supabase&logoColor=white">
+  <img alt="llm" src="https://img.shields.io/badge/LLM-Groq%20%E2%86%92%20Gemini%20rotation-7c3aed">
+  <img alt="frontend stack" src="https://img.shields.io/badge/UI-React%2019%20%2B%20TanStack-61DAFB?logo=react&logoColor=white">
+  <img alt="status" src="https://img.shields.io/badge/status-live-22c55e">
+</p>
+
+---
+
+## 🚀 Try it live
+
+|  | URL |
+|---|---|
+| **Web app** | <https://praxis-mvp.esh90.workers.dev> |
+| **API health** | <https://praxis-backend-n15d.onrender.com/api/health> |
+
+> **First request takes 30–60 s** while the free Render dyno wakes from sleep — that's the cold-start tax of a $0/mo backend. Subsequent requests are fast.
+
+### Copy-paste hypotheses for a clean demo
+
+| Domain | Hypothesis |
+|---|---|
+| **Diagnostics** | A paper-based electrochemical biosensor can detect CRP from whole blood at ELISA-class sensitivity in under 10 minutes. |
+| **Gut Health** | Daily *Lactobacillus rhamnosus* GG supplementation in C57BL/6 mice reduces FITC-dextran intestinal permeability by tightening junction protein expression. |
+| **Cell Biology** | Trehalose outperforms DMSO as a cryoprotectant for HeLa post-thaw viability above 85%. |
+| **Climate** | *Sporomusa ovata* in a bioelectrochemical cell can convert CO₂ to acetate at >2 g/L/day at lab scale. |
+
 ---
 
 ## Table of contents
@@ -17,12 +46,13 @@ Built for the **AI Scientist** challenge (Fulcrum Science × MIT Club).
 5. [The feedback loop (where Praxis gets smarter)](#the-feedback-loop)
 6. [Reliability — multi-model rotation](#reliability)
 7. [Tech stack](#tech-stack)
-8. [API reference](#api-reference)
-9. [Environment variables](#environment-variables)
-10. [Quick start (3 commands)](#quick-start)
-11. [Repo layout](#repo-layout)
-12. [Demo script for judges](#demo-script-for-judges)
-13. [Honest limitations](#honest-limitations)
+8. [Deployment topology](#deployment-topology)
+9. [API reference](#api-reference)
+10. [Environment variables](#environment-variables)
+11. [Quick start (local dev)](#quick-start)
+12. [Repo layout](#repo-layout)
+13. [Demo script for judges](#demo-script-for-judges)
+14. [Honest limitations](#honest-limitations)
 
 ---
 
@@ -93,6 +123,11 @@ Type *"the budget is too high, cut equipment by half"* in the chat:
 ---
 
 ## Architecture
+
+![Praxis architecture](docs/architecture-diagram.png)
+
+<details>
+<summary>Mermaid source (click to expand — edit <code>docs/architecture.mmd</code> to regenerate the PNG)</summary>
 
 ```mermaid
 flowchart TB
@@ -166,6 +201,8 @@ flowchart TB
     class LLM,TAV,EMB infra
     class PLANS,FEED,RPC db
 ```
+
+</details>
 
 **Key integration choice:** the UI talks to the **backend Express API**, not Supabase Edge Functions. Supabase is the **persistence + vector retrieval** layer, not the orchestrator.
 
@@ -245,6 +282,7 @@ Configurable per-deployment via `GROQ_MODEL_CANDIDATES` and `GEMINI_MODEL_CANDID
 - **Tavily caching** — `agents/lib/cacheManager.js` writes a 7-day TTL cache keyed by hypothesis hash, so repeat demos don't burn paid credits
 - **Frontend `humanizeError`** — `frontend/src/lib/api.ts` translates raw API errors into actionable English (e.g., "Both LLM providers are at their daily limits. Wait ~30 min for the Groq quota to roll, or add another GEMINI_API_KEY in `agents/.env`.")
 - **PDF Unicode sanitization** — `frontend/src/lib/exportPDF.ts` replaces problematic Unicode (em-dashes, smart quotes, arrows) with ASCII equivalents before `jsPDF` draws them, so the WinAnsi-encoded Helvetica doesn't render boxes
+- **CORS allowlist** — `backend/server.js` reads `FRONTEND_ORIGIN` (comma-separated) so production locks down which Worker URLs may call the API
 
 ---
 
@@ -255,7 +293,7 @@ Configurable per-deployment via `GROQ_MODEL_CANDIDATES` and `GEMINI_MODEL_CANDID
 | Layer | Choice |
 |---|---|
 | Framework | **React 19** + Vite |
-| Routing | **TanStack Router** (file-based, auto-generated `routeTree.gen.ts`) |
+| Routing | **TanStack Router** (file-based, auto-generated `routeTree.gen.ts`) + **TanStack Start** for SSR |
 | State | **Zustand** (single store: `usePraxisStore`) |
 | UI primitives | **Radix UI** + shadcn-style components in `src/components/ui/` |
 | Styling | **Tailwind CSS v4** (CSS variables for theme) |
@@ -264,10 +302,11 @@ Configurable per-deployment via `GROQ_MODEL_CANDIDATES` and `GEMINI_MODEL_CANDID
 | Markdown | `react-markdown` + `remark-gfm` |
 | Toasts | `sonner` |
 | Theme | Custom dark/light toggle (`ThemeToggle.tsx`); CSS vars in `src/styles.css` |
+| Build target | **Cloudflare Workers** via `@cloudflare/vite-plugin` (the bundle in `dist/server/` is a Worker, not a Node server) |
 
 ### Backend (`backend/`)
 
-- Node.js (ESM) + **Express**, CORS-enabled
+- Node.js (ESM) + **Express**, env-driven CORS allowlist
 - `dotenv` loads `backend/.env` *and* `agents/.env` (so a single source of truth for keys works in local dev)
 - **Supabase admin** (`@supabase/supabase-js` + service-role key) for inserts and RPC calls
 - **Server-side embeddings** (`@xenova/transformers`, `Xenova/all-MiniLM-L6-v2`, **384 dims**) when persisting feedback
@@ -289,9 +328,46 @@ Configurable per-deployment via `GROQ_MODEL_CANDIDATES` and `GEMINI_MODEL_CANDID
 
 ---
 
+## Deployment topology
+
+Three free-tier services, glued together with env vars:
+
+```
+                                    ┌──────────────────────────────┐
+                                    │  Cloudflare Workers (free)   │
+   Browser  ────────────────────►   │  praxis-mvp.esh90.workers.dev│
+                                    │  React 19 SPA + TanStack SSR │
+                                    └──────────────┬───────────────┘
+                                                   │  HTTPS, CORS-locked
+                                                   ▼
+                                    ┌──────────────────────────────┐
+                                    │   Render Web Service (free)  │
+                                    │  praxis-backend-n15d.onrender.com │
+                                    │  Express + agents/ in-process│
+                                    └──────────────┬───────────────┘
+                                                   │  pgvector RPCs, REST
+                                                   ▼
+                                    ┌──────────────────────────────┐
+                                    │     Supabase (free tier)     │
+                                    │  Postgres 15 + pgvector      │
+                                    └──────────────────────────────┘
+```
+
+| Layer | Host | Why |
+|---|---|---|
+| Frontend | **Cloudflare Workers** | The Vite build emits a Worker bundle (`dist/server/wrangler.json`). Free tier covers 100k requests/day. |
+| Backend | **Render** Web Service | Long-running Node, easy `agents/` sibling import. Free dyno sleeps after 15 min idle. |
+| Database | **Supabase** | Postgres 15 + pgvector + RPCs out of the box. Free tier: 500 MB. |
+
+Everything is reproducible from `render.yaml` (root) and `frontend/wrangler.jsonc`. **No CI/CD config needed** — `git push` triggers Render auto-deploy; Cloudflare ships via `npx wrangler deploy` from `frontend/`.
+
+---
+
 ## API reference
 
 Base URL is `http://localhost:<PORT>` from `backend/.env` (default **3001** if unset; the frontend defaults to `3002` unless `VITE_PRAXIS_API_URL` is set — keep these aligned).
+
+In production: `https://praxis-backend-n15d.onrender.com`.
 
 ### `POST /api/praxis/generate`
 
@@ -351,63 +427,64 @@ Embeds the correction text (384-d) and inserts a `plan_feedback` row plus a loca
 
 ## Environment variables
 
-### `agents/.env` (the brains — required for any real run)
+All `.env` files are gitignored. Templates live in `*.env.example` next to each.
+
+### `agents/.env` — the brains (required for any real run)
 
 | Variable | Purpose | Required? |
 |---|---|---|
 | `GROQ_API_KEY` | Primary LLM auth | **yes** |
-| `GROQ_MODEL` | Single-model legacy override (used as candidate[0] if `GROQ_MODEL_CANDIDATES` is unset) | no |
-| `GROQ_MODEL_CANDIDATES` | Comma-separated rotation list (e.g. `llama-3.3-70b-versatile,llama-3.1-8b-instant,gemma2-9b-it,mixtral-8x7b-32768`) | recommended |
+| `GROQ_MODEL_CANDIDATES` | Comma-separated rotation list | recommended |
 | `GEMINI_API_KEY` | Fallback LLM auth | recommended |
-| `GEMINI_MODEL_CANDIDATES` | Comma-separated Gemini rotation (e.g. `gemini-2.0-flash,gemini-2.0-flash-lite,gemini-2.0-flash-exp,gemini-1.5-flash-latest`) | recommended |
+| `GEMINI_MODEL_CANDIDATES` | Comma-separated Gemini rotation | recommended |
 | `TAVILY_API_KEY` | Literature search | **yes** for QC |
-| `TAVILY_MAX_CREDITS_PER_RUN` | Hard cap (default 4) | no |
-| `ENABLE_TAVILY_CACHE` | Toggle the file cache | no |
-| `DEBUG_PROMPTS` | Console-log full prompts | no |
-| `SUPABASE_URL` | Enables hybrid DB RAG retrieval from inside agents | optional |
-| `SUPABASE_SERVICE_ROLE_KEY` | Same | optional |
+| `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | Hybrid DB-RAG retrieval | optional (falls back to local JSON cache) |
 
 ### `backend/.env`
 
 | Variable | Purpose |
 |---|---|
-| `PORT` / `BACKEND_URL` | Express port (keep aligned with frontend `VITE_PRAXIS_API_URL`) |
-| `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | Persistence to `experiment_plans` and `plan_feedback`; **server-only — never expose this** |
-| `GROQ_API_KEY` / `TAVILY_API_KEY` | Optional duplicates if you don't want backend reading `agents/.env` |
+| `PORT` | Express port (default 3001 local, set automatically on Render) |
+| `FRONTEND_ORIGIN` | Comma-separated CORS allowlist for production (leave blank in dev) |
+| `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | Persistence to `experiment_plans` and `plan_feedback`; **server-only — never expose** |
+| `GROQ_API_KEY` / `TAVILY_API_KEY` / `GEMINI_API_KEY` | Forwarded to the agents pipeline (also accepted from `agents/.env` in local dev) |
 
 ### `frontend/.env`
 
 | Variable | Purpose |
 |---|---|
-| `VITE_PRAXIS_API_URL` | Backend origin for `/api/praxis/*` (e.g. `http://localhost:3001`) |
-| `VITE_SUPABASE_URL` + `VITE_SUPABASE_PUBLISHABLE_KEY` | Anon Supabase client (for any non-admin surfaces) |
+| `VITE_PRAXIS_API_URL` | Backend origin for `/api/praxis/*` |
+| `VITE_SUPABASE_URL` + `VITE_SUPABASE_PUBLISHABLE_KEY` | Anon Supabase client (browser-safe) |
+
+> **Note:** Vite *inlines* `VITE_*` vars at build time, so they must be set before `npm run build`. Rebuild the Worker (`npx wrangler deploy`) after any change.
 
 ### Security checklist
 
 - **Never** commit `.env` files. The repo `.gitignore` covers `**/.env` already; verify with `git check-ignore -v backend/.env` before pushing.
-- **Never** ship `SUPABASE_SERVICE_ROLE_KEY` to the browser. It belongs only in `backend/.env`.
+- **Never** ship `SUPABASE_SERVICE_ROLE_KEY` to the browser. It belongs only in `backend/.env` (or as a Render secret).
 - The frontend should only ever use the **anon/publishable** Supabase key.
 
 ---
 
 ## Quick start
 
-You need three terminals (frontend + backend; agents run in-process inside the backend).
+> **Easiest path**: just open <https://praxis-mvp.esh90.workers.dev> in a browser. The sections below are for local development.
+
+You need two terminals (frontend + backend; agents run in-process inside the backend).
 
 ### 1. Fill in keys
 
 ```powershell
 # Copy templates and fill in real keys
 copy agents\.env.example agents\.env
-# Edit:
-#   GROQ_API_KEY        (required)  console.groq.com
-#   GEMINI_API_KEY      (recommended)  aistudio.google.com
-#   TAVILY_API_KEY      (required for QC)  app.tavily.com
-#   GROQ_MODEL_CANDIDATES, GEMINI_MODEL_CANDIDATES  (recommended)
+copy backend\.env.example backend\.env
+copy frontend\.env.example frontend\.env
 
-# Optional but recommended for full RAG:
-#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY  in backend\.env
-#   VITE_PRAXIS_API_URL=http://localhost:3001  in frontend\.env
+# Then edit each .env with real values:
+#   GROQ_API_KEY        (required)        console.groq.com
+#   GEMINI_API_KEY      (recommended)     aistudio.google.com
+#   TAVILY_API_KEY      (required for QC) app.tavily.com
+#   SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY  (optional but enables full RAG)
 ```
 
 ### 2. Start backend
@@ -416,7 +493,7 @@ copy agents\.env.example agents\.env
 cd backend
 npm install
 npm start
-# [ready] backend listening on http://localhost:3001
+# [ready] backend listening on http://0.0.0.0:3001
 ```
 
 ### 3. Start frontend
@@ -425,14 +502,24 @@ npm start
 cd frontend
 npm install
 npm run dev
-# Vite serves at http://localhost:5173
+# Vite serves at http://localhost:5173 (or as the lovable preset chooses)
 ```
 
-Open `http://localhost:5173`, type a hypothesis, watch the canvas fill in.
+Open the printed URL, type a hypothesis, watch the canvas fill in.
 
 ### Database setup (only if you want persistence + RAG)
 
 The Postgres schema lives in `database/migrations/`. Apply via the Supabase SQL editor (paste each file in order) — `database/scripts/run_migrations.js` requires a custom `exec_sql` RPC which isn't created by default. See `database/README.md` for the operational playbook.
+
+### Self-host the production stack
+
+We ship infra-as-code so you can fork-and-deploy:
+
+- **Backend** → `render.yaml` is a one-click Render Blueprint. New Blueprint → connect this repo → fill the `sync: false` secrets in the dashboard.
+- **Frontend** → `cd frontend && npx wrangler login && npm run build && npx wrangler deploy`. Set `VITE_PRAXIS_API_URL` in `frontend/.env` to your Render URL **before** building.
+- **DB** → run the SQL migrations in `database/migrations/` against any Supabase project.
+
+After both deploys are live, set `FRONTEND_ORIGIN` in Render's Environment tab to your Worker URL to lock down CORS.
 
 ---
 
@@ -440,7 +527,8 @@ The Postgres schema lives in `database/migrations/`. Apply via the Supabase SQL 
 
 ```
 Praxis/
-├── frontend/                       Vite + React 19 + TanStack Router
+├── frontend/                       Vite + React 19 + TanStack Router (Cloudflare Workers target)
+│   ├── wrangler.jsonc              Cloudflare deploy config
 │   └── src/
 │       ├── routes/                 / (landing + split-view, single component)
 │       ├── components/
@@ -452,7 +540,7 @@ Praxis/
 │       ├── store/                  usePraxisStore (Zustand)
 │       └── lib/                    api.ts, exportPDF.ts, praxis-types.ts, theme.tsx
 │
-├── backend/                        Express API
+├── backend/                        Express API (deployed on Render)
 │   └── src/
 │       ├── routes/                 health, plans, feedback, generate, praxis (the real one)
 │       └── services/               agentsRunner, praxisMapper, supabaseAdmin, localEmbedder
@@ -464,10 +552,16 @@ Praxis/
 │   ├── data/                       reagent_catalog.json
 │   └── cache/                      feedback_store.json + tavily cache (gitignored)
 │
-└── database/                       Supabase schema + scripts
-    ├── migrations/                 001..006 (pgvector, RPCs, indexes)
-    ├── seeds/                      seed_plans.sql, seed_feedback.sql
-    └── README.md                   operational playbook
+├── database/                       Supabase schema + scripts
+│   ├── migrations/                 001..006 (pgvector, RPCs, indexes)
+│   ├── seeds/                      seed_plans.sql, seed_feedback.sql
+│   └── README.md                   operational playbook
+│
+├── docs/
+│   ├── architecture.mmd            Mermaid source for the architecture diagram
+│   └── architecture-diagram.png    Rendered PNG (used in this README)
+│
+└── render.yaml                     Render IaC (one-click backend deploy)
 ```
 
 ---
@@ -485,13 +579,15 @@ Use these verbatim with the matching domain pill — they're tuned to land clean
 
 Recommended demo flow (≈3 min):
 
-1. **Land** on `/`, hover the new logo (it animates), toggle dark mode, hover the domain pills
+1. **Land** on <https://praxis-mvp.esh90.workers.dev>, hover the new logo (it animates), toggle dark mode, hover the domain pills
 2. **Pick** "Cell Biology", paste the trehalose hypothesis, hit submit
 3. **Narrate** the live status block during QC, point out the **NoveltyCard** with clickable references
 4. Click **Generate Experiment Plan**, watch tabs populate left-to-right
 5. In the chat, type *"reduce equipment cost by 50% — we have access to a shared cytometer"* — watch the **Budget** tab hot-swap with a diff indicator
 6. Click **Export PDF** — open the file, scroll to "Failures and Mitigations", show the clean Unicode rendering and clickable references
 7. Thumbs-up the **Validation** tab; thumbs-down the **Materials** tab with a one-line correction; explain the RAG loop will surface this on the next run
+
+> **Pro tip for live demos:** hit `https://praxis-backend-n15d.onrender.com/api/health` 30 s before you present so the Render dyno is warm — kills the cold-start tax for your demo run.
 
 ---
 
@@ -502,7 +598,7 @@ We'd rather flag these than have them surface during judging:
 - **Stage timing in the UI is partly aspirational.** The backend currently runs the full pipeline in one shot; the chat status block animates a stylized stage sequence over the actual network call. The total wall-clock is real (LLM + Tavily + embedding loads dominate); the per-stage durations are smoothed.
 - **Catalog coverage is intentionally partial.** `agents/data/reagent_catalog.json` is curated, not exhaustive. Agents propose plausible SKUs outside the catalog but are instructed to mark them as unverified.
 - **`exec_sql` RPC isn't created by default**, so `database/scripts/run_migrations.js` and `run_seeds.js` may fall back to "apply the SQL manually in the Supabase editor." This is documented in `database/README.md`.
-- **First run is slow.** Loading `Xenova/all-MiniLM-L6-v2` cold-downloads the ONNX weights into the local cache. Subsequent runs are fast.
+- **Render free tier sleeps.** First request after 15 min idle takes 30–60 s while the dyno wakes and `@xenova/transformers` re-downloads the embedding model. Subsequent requests are fast.
 - **No auth on `/api/praxis/feedback` yet.** Acceptable for hackathon demo; production would need rate-limiting + reviewer identity verification.
 
 ---
@@ -522,6 +618,9 @@ We'd rather flag these than have them surface during judging:
 | Persistence mapping | `backend/src/routes/praxis.js`, `backend/src/services/praxisMapper.js` |
 | Theme tokens | `frontend/src/styles.css` (CSS variables under `:root` and `.dark`) |
 | Logo | `frontend/src/components/layout/PraxisLogo.tsx` |
+| Production CORS allowlist | `backend/server.js` (reads `FRONTEND_ORIGIN`) |
+| Render service config | `render.yaml` (root) |
+| Cloudflare Worker config | `frontend/wrangler.jsonc` |
 
 ---
 
