@@ -1,399 +1,510 @@
-# Praxis — AI Scientist (Hypothesis → Literature QC → Runnable Experiment Plan)
+# Praxis
 
-Praxis is a hackathon project aimed at the **“AI Scientist”** challenge: compress the path from a **natural-language scientific hypothesis** to an **operationally realistic experiment plan** a lab could actually execute (protocol, materials with supplier context, budget, timeline, validation).
+> **From a hypothesis to a runnable experiment plan, in minutes — not weeks.**
 
-This repository is a **monorepo** with four cooperating layers:
+Praxis is an AI scientist-in-the-loop. You type a hypothesis in plain English; Praxis runs a literature novelty check, then drafts a full benchwork-realistic plan — protocol, materials with catalog numbers, budget, timeline, and validation strategy — on a live canvas you can refine through chat.
 
-| Layer | Folder | Responsibility |
-|------|--------|------------------|
-| **Frontend** | `frontend/` | Polished UI: hypothesis input, novelty display, plan navigation, scientist review |
-| **Backend** | `backend/` | HTTP API + orchestration glue: runs the agent pipeline, persists to Supabase, embeds feedback |
-| **Agents** | `agents/` | The “brains”: staged LLM pipeline + literature search + retrieval-augmented corrections |
-| **Database** | `database/` | Supabase/Postgres schema (pgvector), RLS policies, SQL RPCs for RAG, seeds, automation scripts |
+Built for the **AI Scientist** challenge (Fulcrum Science × MIT Club).
 
 ---
 
-## What the product does (mapped to the challenge brief)
+## Table of contents
 
-### 1) Input — natural language hypothesis
-The user enters a hypothesis in plain language and selects a **domain** (Diagnostics / Gut Health / Cell Biology / Climate).
-
-### 2) Literature QC — fast novelty signal + references
-Before deep plan synthesis, the pipeline performs a **lightweight literature check** using **Tavily search** + **LLM classification** into a novelty signal:
-
-- `not_found`
-- `similar_work_exists` (**must match this exact string**; not `similar_exists`)
-- `exact_match_found`
-
-It returns **0–3 references** (title/url/relevance) suitable for UI display.
-
-### 3) Experiment plan — operational deliverable
-The system generates structured sections aligned to the judging rubric:
-
-- **Protocol** (stepwise bench reality: controls, QC checkpoints, durations)
-- **Materials** (anchored to a curated catalog when possible + realistic vendor patterns when not)
-- **Budget** (labor/equipment/contingency rules; materials subtotal treated as authoritative input)
-- **Timeline** (phased schedule with procurement constraints)
-- **Validation** (success criteria tied to hypothesis thresholds, stats, controls, failure modes)
-
-### Stretch goal — scientist review loop (RAG)
-Scientists can rate/correct sections. Corrections are:
-
-- stored in **Supabase** (`plan_feedback`) with **`vector(384)`** embeddings (same embedding space as agents)
-- also appended to a **local JSON cache** (`agents/cache/feedback_store.json`) for fast iteration during demos
-
-During later generations, agents retrieve “similar past corrections” and inject them as **few-shot** context (protocol/materials/budget/validation sections).
+1. [The leap we're making](#the-leap-were-making)
+2. [What it looks like in 60 seconds](#what-it-looks-like-in-60-seconds)
+3. [Architecture](#architecture)
+4. [The five-agent pipeline](#the-five-agent-pipeline)
+5. [The feedback loop (where Praxis gets smarter)](#the-feedback-loop)
+6. [Reliability — multi-model rotation](#reliability)
+7. [Tech stack](#tech-stack)
+8. [API reference](#api-reference)
+9. [Environment variables](#environment-variables)
+10. [Quick start (3 commands)](#quick-start)
+11. [Repo layout](#repo-layout)
+12. [Demo script for judges](#demo-script-for-judges)
+13. [Honest limitations](#honest-limitations)
 
 ---
 
-## End-to-end architecture (how requests flow)
+## The leap we're making
+
+A scientist with a question used to face a week of work before they could even *attempt* the experiment:
+
+> read 30 papers → draft a protocol → price reagents → fight a lab manager about budget → realize controls are missing → start over.
+
+Praxis collapses that into a chat. The deliverable isn't a paragraph; it's an **operationally realistic experiment plan** — the same artifact a postdoc would hand a PI for go/no-go review.
+
+### What separates Praxis from "ChatGPT, but for science"
+
+| Concern | Generic LLM | Praxis |
+|---|---|---|
+| Literature grounding | Hallucinates citations | **Tavily** search → real URLs, novelty signal classified into 3 buckets |
+| Protocol realism | Plausible but vague | Stepwise with **controls, QC checkpoints, durations** baked in by Agent 2 |
+| Materials | Generic reagents | **Catalog-grounded** against `agents/data/reagent_catalog.json` (real SKUs, real suppliers) |
+| Budget | Hand-wavy total | **Materials subtotal is authoritative** input; labor + contingency layered on top |
+| Improving over time | Forgets every chat | **pgvector RAG** retrieves past scientist corrections as few-shot context |
+| Reliability under load | Fails on first 429 | **Multi-model rotation**: Groq[0..N] → Gemini[0..N] before giving up |
+
+---
+
+## What it looks like in 60 seconds
+
+The frontend is a **single-page chat-canvas split**. There is no `/dashboard` — the same route flips between two layouts driven by Zustand state.
+
+### 1. Landing — uncluttered, focused on input
+
+- Top nav: the **Praxis** wordmark (custom monogram + Instrument Serif italic) with a theme toggle
+- Hero: "From hypothesis to runnable experiment."
+- Domain pills (Diagnostics / Gut Health / Cell Biology / Climate / Other) — clicking one **only** sets the domain; it does not auto-fill the textarea
+- Optional "Need inspiration?" disclosure reveals sample hypotheses as click-to-fill examples
+- Single textarea + submit
+
+### 2. Live pipeline — Stage 1 (Literature QC)
+
+The moment you submit:
+
+- The view splits — chat panel on the left, canvas on the right
+- A **live status block** in the chat shows three QC stages: parsing → searching → classifying
+- A **NoveltyCard** appears with the result (`Not Found` / `Similar Exists` / `Exact Match`) plus 0–3 clickable references
+- A **"Generate Experiment Plan"** CTA awaits your decision
+
+### 3. Live pipeline — Stage 2 (Plan synthesis)
+
+Click Generate, and:
+
+- Canvas tabs (Protocol → Materials → Budget → Timeline → Validation) **populate one by one** with skeleton-to-filled animations
+- Each tab is auto-focused as it lands (you can override with manual tab clicks)
+- The chat shows a "Plan complete" assistant message with a download/refine prompt
+
+### 4. Refine — chat-driven inline regeneration
+
+Type *"the budget is too high, cut equipment by half"* in the chat:
+
+- Backend `/api/praxis/chat` endpoint classifies which section to update (heuristics first, LLM if needed)
+- Re-runs **only the relevant agent**, not the whole pipeline
+- The patched section is hot-swapped in the canvas with a **diff indicator** highlighting what changed
+- Your correction is also persisted to the **feedback store** so future generations learn from it
+
+### 5. Per-section feedback + PDF export
+
+- Thumbs-up / thumbs-down on any tab → `POST /api/praxis/feedback` with rating + correction
+- One-click **"Export PDF"** in the canvas toolbar generates a clean, multi-page report with clickable reference links and Unicode-sanitized text (no rendering glitches in `jsPDF`'s WinAnsi font)
+
+---
+
+## Architecture
 
 ```mermaid
 flowchart LR
-  UI[Frontend /dashboard] -->|POST /api/praxis/generate| API[Backend Express]
-  API --> ORCH[agents/orchestrator.js runPipeline]
-  ORCH --> A0[Agent0 parseHypothesis]
-  ORCH --> A1[Agent1 runLiteratureQC]
-  ORCH --> A2[Agent2 generateProtocol]
-  ORCH --> A3[Agent3 generateMaterials]
-  ORCH --> A4[Agent4 generateBudgetTimeline]
-  ORCH --> A5[Agent5 generateValidation]
-  A1 --> TAVILY[Tavily Search API]
-  A0 --> LLM[Groq Chat Completions JSON mode]
-  A2 --> LLM
-  A3 --> LLM
-  A4 --> LLM
-  A5 --> LLM
-  A2 --> FB[feedbackStore getRelevantFeedback]
-  A3 --> FB
-  A4 --> FB
-  A5 --> FB
-  FB --> FS[Local JSON cache agents/cache/feedback_store.json]
-  FB --> SBRPC[Supabase RPC get_relevant_feedback]
-  API --> SBINS[Supabase insert experiment_plans]
-  UI -->|POST /api/praxis/feedback| API
-  API --> SBFB[Supabase insert plan_feedback + embedding]
-  API --> FS
+  subgraph Frontend["Frontend — Vite + React 19 + TanStack Router"]
+    UI[Chat-Canvas split UI]
+    STORE[Zustand store<br/>usePraxisStore]
+    PDF[exportPDF.ts<br/>jsPDF + Unicode sanitizer]
+    UI --> STORE
+    UI --> PDF
+  end
+
+  subgraph Backend["Backend — Express (ESM)"]
+    GEN["/api/praxis/generate"]
+    CHAT["/api/praxis/chat"]
+    FB["/api/praxis/feedback"]
+  end
+
+  subgraph Agents["Agents — orchestrator.js"]
+    A0[Agent 0<br/>Hypothesis Parser]
+    A1[Agent 1<br/>Literature QC]
+    A2[Agent 2<br/>Protocol]
+    A3[Agent 3<br/>Materials]
+    A4[Agent 4<br/>Budget + Timeline]
+    A5[Agent 5<br/>Validation]
+    LLM[groqClient.js<br/>Groq → Gemini rotation]
+    TAV[tavilyClient.js]
+    EMB[embedder.js<br/>Xenova MiniLM 384-d]
+    A0 & A2 & A3 & A4 & A5 --> LLM
+    A1 --> TAV
+    A1 --> LLM
+  end
+
+  subgraph DB["Supabase — Postgres 15 + pgvector"]
+    PLANS[(experiment_plans)]
+    FEED[(plan_feedback)]
+    CACHE[(tavily_cache)]
+    RPC[get_relevant_feedback RPC]
+  end
+
+  STORE -- POST hypothesis --> GEN
+  STORE -- POST follow-up --> CHAT
+  STORE -- POST rating --> FB
+
+  GEN --> A0 --> A1 --> A2 --> A3 --> A4 --> A5
+  GEN --> PLANS
+
+  A2 & A3 & A4 & A5 -. retrieve few-shot .-> RPC
+  RPC --> FEED
+  FB --> EMB --> FEED
+
+  CHAT -. re-runs single agent .-> A2
+  CHAT -.-> FEED
 ```
 
-**Important integration detail:** the UI does **not** call Supabase Edge Functions for generation anymore. Generation is **`fetch()` → backend** (`/api/praxis/generate`). Supabase is still used for **data persistence + vector retrieval**.
+**Key integration choice:** the UI talks to the **backend Express API**, not Supabase Edge Functions. Supabase is the **persistence + vector retrieval** layer, not the orchestrator.
 
 ---
 
-## Tech stack (what we use, where)
+## The five-agent pipeline
+
+All agents live in `agents/agents/`, share `agents/lib/`, and are plain ESM modules. The orchestrator (`agents/orchestrator.js`) sequences them and exports `runPipeline(hypothesis, options)`.
+
+| # | Agent | File | What it does | RAG section |
+|---|---|---|---|---|
+| 0 | Hypothesis Parser | `agent0_parser.js` | Extracts domain, intervention, outcome, assay, controls into a Zod-validated JSON | — |
+| 1 | Literature QC | `agent1_qc.js` | Tavily search + LLM classification → `not_found` / `similar_work_exists` / `exact_match_found` + ≤3 references | — |
+| 2 | Protocol | `agent2_protocol.js` | Stepwise protocol with controls, QC checkpoints, durations | `protocol` |
+| 3 | Materials | `agent3_materials.js` | Materials list grounded in `agents/data/reagent_catalog.json`; flags out-of-catalog SKUs as unverified | `materials` |
+| 4 | Budget + Timeline | `agent4_budget_timeline.js` | Cost model (labor + materials + contingency); phased schedule with procurement constraints | `budget` |
+| 5 | Validation | `agent5_validation.js` | Success criteria, statistical test, controls, failure modes | `validation` |
+
+**Graceful degradation.** If any agent fails (LLM error, JSON parse error, etc.), the orchestrator returns `{ ok: false, data: null }` for that stage and assembles the partial plan with `null`/empty fallbacks. Nothing is hardcoded; the canvas honestly shows what was built and what was not.
+
+---
+
+## The feedback loop
+
+This is what makes Praxis improve over time instead of being a one-shot demo.
+
+### Two paths into the store
+
+1. **Explicit rating + correction** — user clicks thumbs-down on a section, types a correction → `POST /api/praxis/feedback` → embedded with `Xenova/all-MiniLM-L6-v2` (384-dim) → inserted into `plan_feedback` *and* appended to `agents/cache/feedback_store.json` for instant in-process recall.
+2. **Inline chat refinement** — user types *"add a positive control with C57BL/6 mice"* → `POST /api/praxis/chat` → if the message is substantive (>40 chars) and not a generic regen request, it's also stored as `rating: 2` feedback. Generic regen requests are **filtered out** so they don't pollute the RAG store.
+
+### Two paths out of the store
+
+When Agents 2–5 build a section, they call `getRelevantFeedback(parsedHypothesis, section)` which:
+
+1. Embeds the current hypothesis context (384-d)
+2. Hits the Supabase RPC `get_relevant_feedback(query_embedding, filter_domain, filter_section, max_results)` — filters: `rating <= 3`, `length(correction) > 10`, ordered by pgvector cosine distance (`<=>`)
+3. Falls back to the local JSON cache if Supabase is unavailable
+4. Injects the top matches as **few-shot examples** in the agent's system prompt
+
+### Why filter to `rating <= 3`?
+
+Because few-shot RAG learns from **errors**, not validations. A thumbs-up tells you "this output was good" — it shouldn't be re-injected as a "fix this" example. Positive feedback is recorded for analytics, but not retrieved during generation.
+
+---
+
+## Reliability
+
+LLM APIs go down. Free tiers hit token-per-day caps. We solved this without paying for upgrades.
+
+### Groq → Gemini, multi-model on each side
+
+```
+Groq[ llama-3.3-70b-versatile ]
+   ↓ 429 / TPD exhausted
+Groq[ llama-3.1-8b-instant ]
+   ↓ 429 / TPD exhausted
+Groq[ gemma2-9b-it ]
+   ↓ 429 / TPD exhausted
+Groq[ mixtral-8x7b-32768 ]
+   ↓ all Groq exhausted
+Gemini[ gemini-2.0-flash ]
+   ↓ rate-limited / 404
+Gemini[ gemini-2.0-flash-lite ]
+   ↓ ...
+Gemini[ gemini-2.0-flash-exp ]
+   ↓ ...
+Gemini[ gemini-1.5-flash-latest ]
+```
+
+This lives in `agents/lib/groqClient.js`. Because Groq enforces token quotas **per model within an org**, listing 4 models effectively quadruples our daily budget without a second API key.
+
+Configurable per-deployment via `GROQ_MODEL_CANDIDATES` and `GEMINI_MODEL_CANDIDATES` (comma-separated). Non-rate-limit errors abort early so we don't burn fallback budget on deterministic failures (auth, content filter, malformed prompt).
+
+### Other reliability choices
+
+- **Tavily caching** — `agents/lib/cacheManager.js` writes a 7-day TTL cache keyed by hypothesis hash, so repeat demos don't burn paid credits
+- **Frontend `humanizeError`** — `frontend/src/lib/api.ts` translates raw API errors into actionable English (e.g., "Both LLM providers are at their daily limits. Wait ~30 min for the Groq quota to roll, or add another GEMINI_API_KEY in `agents/.env`.")
+- **PDF Unicode sanitization** — `frontend/src/lib/exportPDF.ts` replaces problematic Unicode (em-dashes, smart quotes, arrows) with ASCII equivalents before `jsPDF` draws them, so the WinAnsi-encoded Helvetica doesn't render boxes
+
+---
+
+## Tech stack
 
 ### Frontend (`frontend/`)
-- **React 19** + **Vite** dev server (`npm run dev`)
-- **TanStack Router** (`src/routes/*`, generated `src/routeTree.gen.ts`)
-- **UI**: Radix primitives + Tailwind CSS v4 + shadcn-style components under `src/components/ui/*`
-- **Icons**: `lucide-react`
-- **Toasts**: `sonner`
-- **Supabase JS client** exists for auth/client patterns (`src/integrations/supabase/*`), but **plan generation** is wired to the backend API (see `src/routes/dashboard.tsx`).
+
+| Layer | Choice |
+|---|---|
+| Framework | **React 19** + Vite |
+| Routing | **TanStack Router** (file-based, auto-generated `routeTree.gen.ts`) |
+| State | **Zustand** (single store: `usePraxisStore`) |
+| UI primitives | **Radix UI** + shadcn-style components in `src/components/ui/` |
+| Styling | **Tailwind CSS v4** (CSS variables for theme) |
+| Icons | `lucide-react` |
+| PDF | `jspdf` + `html2canvas` |
+| Markdown | `react-markdown` + `remark-gfm` |
+| Toasts | `sonner` |
+| Theme | Custom dark/light toggle (`ThemeToggle.tsx`); CSS vars in `src/styles.css` |
 
 ### Backend (`backend/`)
-- **Node.js (ESM)** + **Express**
-- **CORS** enabled for local UI dev
-- **dotenv** loads:
-  - `backend/.env` (always, resolved relative to `backend/server.js`)
-  - `agents/.env` (loaded from `../agents/.env` for local convenience)
-- **Supabase admin** (`@supabase/supabase-js` + **service role key**) for server-side inserts and RPC calls
-- **Embeddings** (`@xenova/transformers`, **`Xenova/all-MiniLM-L6-v2`**, **384 dims**) used when saving scientist feedback server-side
+
+- Node.js (ESM) + **Express**, CORS-enabled
+- `dotenv` loads `backend/.env` *and* `agents/.env` (so a single source of truth for keys works in local dev)
+- **Supabase admin** (`@supabase/supabase-js` + service-role key) for inserts and RPC calls
+- **Server-side embeddings** (`@xenova/transformers`, `Xenova/all-MiniLM-L6-v2`, **384 dims**) when persisting feedback
 
 ### Agents (`agents/`)
-- **Orchestrator**: `agents/orchestrator.js` exports `runPipeline(hypothesis, options)` and sequences **six stages** (**Agent 0 → Agent 5**)
-- **LLM calls**: `agents/lib/groqClient.js`
-  - Primary: **Groq** (`groq-sdk`) with JSON mode when `expectJSON: true`
-  - Default model: `process.env.GROQ_MODEL` else **`llama-3.3-70b-versatile`**
-  - Fallback: **Google Gemini** (`@google/generative-ai`) when Groq is rate-limited (429/503)
-- **Literature search**: `agents/lib/tavilyClient.js` uses **`tavily`** SDK (`TAVILY_API_KEY`)
-- **Caching**: `agents/lib/cacheManager.js` (file-based Tavily/QC cache; controlled by `ENABLE_TAVILY_CACHE`)
-- **Structured parsing/validation**: `zod` + `agents/lib/jsonSafeParse.js`
-- **Embeddings / similarity**: `agents/lib/embedder.js` uses **`Xenova/all-MiniLM-L6-v2` (384-dim)**
-- **Feedback store (local)**: `agents/lib/feedbackStore.js` reads/writes `agents/cache/feedback_store.json`
-- **Feedback store (Supabase hybrid)**: `agents/lib/supabaseFeedback.js` calls **`get_relevant_feedback`** RPC when `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` are present in the agents process environment
 
-### Database (`database/`)
-- **Supabase = Postgres 15 + pgvector**
-- **Vectors are `vector(384)` everywhere** (matches Xenova embeddings; **not** OpenAI 1536)
-- SQL migrations + seeds + docs under `database/`
-- Operational notes live in `database/README.md` (especially around optional `exec_sql` helper for automation)
+- **Groq** primary, **Gemini** fallback, both with model rotation
+- **Tavily** for literature search
+- **Zod** for every agent's I/O schema; `jsonSafeParse.js` for resilient JSON repair
+- File-based caches under `agents/cache/` for Tavily + feedback store
+
+### Database (`database/` — Supabase)
+
+- **Postgres 15 + pgvector**
+- **All vectors are `vector(384)`** — matches Xenova MiniLM, *not* OpenAI's 1536. Don't mix.
+- Tables: `experiment_plans`, `plan_feedback`, `tavily_cache`
+- RPC: `get_relevant_feedback(query_embedding, filter_domain, filter_section, max_results)`
+- Postgres lesson learned the hard way: partial indexes can't use volatile functions like `now()` in predicates — see `006_indexes.sql` for the plain-index workaround on `expires_at`
 
 ---
 
-## Agent pipeline (detailed)
+## API reference
 
-All agents are plain **ESM JavaScript** modules under `agents/agents/`. Shared utilities live in `agents/lib/`.
+Base URL is `http://localhost:<PORT>` from `backend/.env` (default **3001** if unset; the frontend defaults to `3002` unless `VITE_PRAXIS_API_URL` is set — keep these aligned).
 
-### Agent 0 — Hypothesis parser
-- **File**: `agents/agents/agent0_parser.js`
-- **Purpose**: Convert a messy hypothesis string into structured JSON (domain, intervention, outcome, assay, controls, etc.)
-- **LLM**: `callLLM(...)` with strict JSON-only instructions
-- **Validation**: `zod` schema (`ParsedHypothesisSchema`)
-- **Output**: `domain` must be one of:
-  - `diagnostics`, `gut_health`, `cell_biology`, `climate`, `other`
+### `POST /api/praxis/generate`
 
-### Agent 1 — Literature QC (novelty + references)
-- **File**: `agents/agents/agent1_qc.js`
-- **Purpose**: “Plagiarism check for science” — quick signal, not a full review article
-- **Steps**:
-  1. `agents/lib/cacheManager.js` may return cached QC
-  2. `agents/lib/tavilyClient.js` runs a Tavily search (`runQCSearch`)
-  3. `callLLM` classifies results into JSON validated by `QCResultSchema`
-- **Novelty enum strings** (must match DB constraints + downstream logic):
-  - `not_found`
-  - `similar_work_exists`
-  - `exact_match_found`
-- **References**: up to 3 `{ title, url, relevance }`
+Runs the full pipeline and returns the UI-shaped plan.
 
-### Agent 2 — Protocol generation (Chain 1)
-- **File**: `agents/agents/agent2_protocol.js`
-- **Purpose**: Step-by-step executable protocol with lab-realistic constraints (controls, QC steps, durations)
-- **RAG**: pulls few-shot corrections via `getRelevantFeedback(..., section='protocol')`
+**Body**
+```json
+{
+  "hypothesis": "Trehalose outperforms DMSO as a cryoprotectant for HeLa post-thaw viability above 85%.",
+  "domain": "Cell Biology"
+}
+```
 
-### Agent 3 — Materials / supply chain (Chain 2)
-- **File**: `agents/agents/agent3_materials.js`
-- **Purpose**: Materials list grounded in procurement reality
-- **Catalog grounding**: reads `agents/data/reagent_catalog.json` and injects a compact “approved vendor list” into the prompt
-- **RAG**: `getRelevantFeedback(..., section='materials')`
+**Returns** — `PraxisPlan` (see `frontend/src/lib/praxis-types.ts`):
+```json
+{
+  "novelty": { "status": "Similar Exists", "references": [...], "confidence": "medium", "summary": "..." },
+  "protocol": [{ "step": 1, "title": "...", "description": "...", "duration_min": 60, "critical_note": "..." }, ...],
+  "materials": [{ "name": "...", "supplier": "...", "catalog": "...", "cost": 245.0, ... }],
+  "budget": { "labor": 1200, "materials": 845, "contingency": 200, "grand_total": 2245, "currency": "USD", ... },
+  "timeline": [{ "phase": "Procurement", "weeks": 2, "start_week": 1, "activities": [...], "dependencies": [...] }],
+  "validation": { "controls": [...], "primary_success_criterion": "...", "risks": [...], ... },
+  "meta": { "plan_id": "...", "hypothesis": "...", "domain": "Cell Biology", "duration_ms": 18421, "pipeline_errors": 0 }
+}
+```
 
-### Agent 4 — Budget + timeline (Chain 3)
-- **File**: `agents/agents/agent4_budget_timeline.js`
-- **Purpose**: Cost model + phased schedule; keeps materials subtotal authoritative
-- **RAG**: `getRelevantFeedback(..., section='budget')`
+### `POST /api/praxis/chat`
 
-### Agent 5 — Validation / QA stats framing (Chain 4)
-- **File**: `agents/agents/agent5_validation.js`
-- **Purpose**: Success criteria tied to hypothesis thresholds, stats approach, controls, failure modes
-- **RAG**: `getRelevantFeedback(..., section='validation')`
+Single-section refinement. Classifies the section, re-runs only that agent, persists the request as RAG feedback (when substantive).
 
-### Orchestrator — the single “full pipeline” entrypoint
-- **File**: `agents/orchestrator.js`
-- **Export**: `runPipeline(hypothesis, { skipQC, skipFeedback })`
-- **Assembles** `finalPlan` containing parsed hypothesis, novelty/QC, protocol, materials, budget/timeline, validation, metadata
+**Body**
+```json
+{
+  "message": "Cut the budget by 30% by removing the cytometry rental.",
+  "plan": { ...current PraxisPlan }
+}
+```
 
----
+**Returns**
+```json
+{ "ok": true, "section": "budget", "updated": { ... }, "summary": "I've recalculated the **budget**." }
+```
 
-## Backend API (Express)
+### `POST /api/praxis/feedback`
 
-Base URL is `http://localhost:<PORT>` where `<PORT>` comes from `backend/.env` (`PORT`, default **3001** if unset).
+Structured rating + correction. Required fields validated server-side:
+- `plan_id`, `section`, `rating` (1–5), `original_content` are always required
+- `correction` is required only when `rating <= 3` (so thumbs-up doesn't bounce with HTTP 400)
 
-### Integrated Praxis endpoints (used by the UI)
-- **`POST /api/praxis/generate`**
-  - Body: `{ "hypothesis": string, "domain": "Gut Health" | ... }` (domain is the UI label)
-  - Runs `agents/orchestrator.js` via dynamic import (`backend/src/services/agentsRunner.js`)
-  - If Supabase admin env is configured, inserts into **`experiment_plans`**
-  - Returns the **UI-shaped** `PraxisPlan` JSON (mapped in `backend/src/services/praxisMapper.js`)
+Embeds the correction text (384-d) and inserts a `plan_feedback` row plus a local cache entry.
 
-- **`POST /api/praxis/feedback`**
-  - Body includes: `plan_id`, `section`, `rating`, `original_content`, `correction`, optional `correction_reason`, `experiment_type`, `domain` (**slug** like `gut_health`)
-  - Embeds correction text (384 dims) and inserts **`plan_feedback`**
-  - Also attempts to append to local `agents/lib/feedbackStore.js` path for immediate retrieval
+### Legacy / demo endpoints (still mounted)
 
-### Legacy/demo endpoints (still present)
-These were used for early backend bring-up tests and simple demos:
-- `GET /api/health`
-- `GET /api/plans`
-- `POST /api/feedback` (in-memory demo store)
-- `POST /api/generate` (minimal Groq echo; not the full Praxis UI pipeline)
-
-> For the hackathon demo path, treat **`/api/praxis/*`** as the “real” integration surface.
+`GET /api/health`, `GET /api/plans`, `POST /api/feedback`, `POST /api/generate` — these were used during early backend bring-up. For the demo path, **`/api/praxis/*`** is the real surface.
 
 ---
 
-## Frontend UX (what exists in the UI)
+## Environment variables
 
-### Routes
-- **`/`**: marketing/landing page (`frontend/src/routes/index.tsx`)
-- **`/dashboard`**: mission control (`frontend/src/routes/dashboard.tsx`)
-  - hypothesis textarea + domain select
-  - generates plan via **`POST ${VITE_PRAXIS_API_URL}/api/praxis/generate`**
-  - novelty badge + tabs: protocol/materials/budget/timeline/validation
-  - **Scientist Review Mode** submits structured corrections to **`POST /api/praxis/feedback`**
+### `agents/.env` (the brains — required for any real run)
 
-### Key UI modules
-- `frontend/src/components/praxis/GenerationStepper.tsx` (progress UI; not a strict mirror of backend stages)
-- `frontend/src/components/praxis/NoveltyBadge.tsx`
-- `frontend/src/components/praxis/PlanViews.tsx` + `MaterialsTable.tsx`
-- `frontend/src/components/praxis/ReviewControls.tsx`
+| Variable | Purpose | Required? |
+|---|---|---|
+| `GROQ_API_KEY` | Primary LLM auth | **yes** |
+| `GROQ_MODEL` | Single-model legacy override (used as candidate[0] if `GROQ_MODEL_CANDIDATES` is unset) | no |
+| `GROQ_MODEL_CANDIDATES` | Comma-separated rotation list (e.g. `llama-3.3-70b-versatile,llama-3.1-8b-instant,gemma2-9b-it,mixtral-8x7b-32768`) | recommended |
+| `GEMINI_API_KEY` | Fallback LLM auth | recommended |
+| `GEMINI_MODEL_CANDIDATES` | Comma-separated Gemini rotation (e.g. `gemini-2.0-flash,gemini-2.0-flash-lite,gemini-2.0-flash-exp,gemini-1.5-flash-latest`) | recommended |
+| `TAVILY_API_KEY` | Literature search | **yes** for QC |
+| `TAVILY_MAX_CREDITS_PER_RUN` | Hard cap (default 4) | no |
+| `ENABLE_TAVILY_CACHE` | Toggle the file cache | no |
+| `DEBUG_PROMPTS` | Console-log full prompts | no |
+| `SUPABASE_URL` | Enables hybrid DB RAG retrieval from inside agents | optional |
+| `SUPABASE_SERVICE_ROLE_KEY` | Same | optional |
 
-### Frontend environment variables (`frontend/.env`)
-Minimum for local integrated runs:
-- **`VITE_PRAXIS_API_URL`**: must match your backend origin (scheme + host + port)
-- Supabase client vars still exist for other integrations:
-  - `VITE_SUPABASE_URL`
-  - `VITE_SUPABASE_PUBLISHABLE_KEY` (anon/publishable)
+### `backend/.env`
 
----
-
-## Database layer (Supabase)
-
-All SQL + scripts live in `database/`. Start with `database/README.md` for the operational playbook.
-
-### Tables (high level)
-- **`experiment_plans`**: one row per generated plan; includes JSON sections + `embedding vector(384)`
-- **`plan_feedback`**: structured scientist corrections + `embedding vector(384)` + `applied_count`
-- **`tavily_cache`**: persistent Tavily/QC cache keyed by hypothesis hash (7-day TTL semantics)
-
-### RAG SQL function
-- **`get_relevant_feedback(query_embedding, filter_domain, filter_section, max_results)`**
-  - Filters: embeddings present, section match, domain match (or `filter_domain='other'` behavior per SQL), `rating <= 3`, non-trivial correction length
-  - Orders by pgvector cosine distance operator **`<=>`**
-
-### Important Postgres lesson (already fixed in-repo)
-Partial indexes cannot use volatile functions like `now()` in predicates. `database/migrations/006_indexes.sql` uses a plain index on `expires_at` instead.
-
-### Database automation caveat (`npm run seed`)
-The seed runner historically expected a Postgres RPC named **`exec_sql`** (not created by default). If you don’t install that RPC, use the **Supabase SQL editor** to run `database/seeds/*.sql` directly (this is documented in `database/README.md`).
-
----
-
-## Environment variables (complete checklist)
-
-### `agents/.env` (required for real runs)
-Used directly by agent modules when the orchestrator runs.
-
-- **`GROQ_API_KEY`**: required for primary LLM path
-- **`GROQ_MODEL`**: optional override (defaults in `agents/lib/groqClient.js`)
-- **`TAVILY_API_KEY`**: required for literature QC search path
-- **`GEMINI_API_KEY`**: optional fallback when Groq is rate limited
-- **`TAVILY_MAX_CREDITS_PER_RUN`**: defaults to `4` in `agents/lib/tavilyClient.js`
-- **`ENABLE_TAVILY_CACHE`**: enables file cache in `agents/lib/cacheManager.js`
-- **`DEBUG_PROMPTS`**: logs prompts when `true`
-- **`SUPABASE_URL`**, **`SUPABASE_SERVICE_ROLE_KEY`**: enables hybrid DB RAG retrieval from agents (`agents/lib/supabaseFeedback.js`)
-
-### `backend/.env` (integration + persistence)
-Loaded by `backend/server.js` (and it also loads `../agents/.env`).
-
-Typical keys:
-- **`PORT`**, **`BACKEND_URL`** (recommended for consistent client config)
-- **`SUPABASE_URL`**, **`SUPABASE_SERVICE_ROLE_KEY`**: enables:
-  - inserting `experiment_plans` after generation
-  - inserting embedded `plan_feedback`
-- **`GROQ_API_KEY` / `TAVILY_API_KEY`**: optional duplicates if you want backend-only configuration (agents env still recommended)
+| Variable | Purpose |
+|---|---|
+| `PORT` / `BACKEND_URL` | Express port (keep aligned with frontend `VITE_PRAXIS_API_URL`) |
+| `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | Persistence to `experiment_plans` and `plan_feedback`; **server-only — never expose this** |
+| `GROQ_API_KEY` / `TAVILY_API_KEY` | Optional duplicates if you don't want backend reading `agents/.env` |
 
 ### `frontend/.env`
-- **`VITE_PRAXIS_API_URL`**: backend origin for `/api/praxis/*` calls
-- **`VITE_SUPABASE_URL`**, **`VITE_SUPABASE_PUBLISHABLE_KEY`**: Supabase client (non-admin)
 
-### `database/.env`
-Used by `database/scripts/*` for migrations/seeds/embed/verify automation.
+| Variable | Purpose |
+|---|---|
+| `VITE_PRAXIS_API_URL` | Backend origin for `/api/praxis/*` (e.g. `http://localhost:3001`) |
+| `VITE_SUPABASE_URL` + `VITE_SUPABASE_PUBLISHABLE_KEY` | Anon Supabase client (for any non-admin surfaces) |
+
+### Security checklist
+
+- **Never** commit `.env` files. The repo `.gitignore` covers `**/.env` already; verify with `git check-ignore -v backend/.env` before pushing.
+- **Never** ship `SUPABASE_SERVICE_ROLE_KEY` to the browser. It belongs only in `backend/.env`.
+- The frontend should only ever use the **anon/publishable** Supabase key.
 
 ---
 
-## How to run the full stack (local)
+## Quick start
 
-You need **three terminals** (backend + frontend; agents run inside backend):
+You need three terminals (frontend + backend; agents run in-process inside the backend).
 
-### Terminal A — backend
+### 1. Fill in keys
+
 ```powershell
-cd e:\Hack-nation_hackathon\Praxis\backend
+# Copy templates and fill in real keys
+copy agents\.env.example agents\.env
+# Edit:
+#   GROQ_API_KEY        (required)  console.groq.com
+#   GEMINI_API_KEY      (recommended)  aistudio.google.com
+#   TAVILY_API_KEY      (required for QC)  app.tavily.com
+#   GROQ_MODEL_CANDIDATES, GEMINI_MODEL_CANDIDATES  (recommended)
+
+# Optional but recommended for full RAG:
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY  in backend\.env
+#   VITE_PRAXIS_API_URL=http://localhost:3001  in frontend\.env
+```
+
+### 2. Start backend
+
+```powershell
+cd backend
 npm install
 npm start
+# [ready] backend listening on http://localhost:3001
 ```
 
-### Terminal B — frontend
+### 3. Start frontend
+
 ```powershell
-cd e:\Hack-nation_hackathon\Praxis\frontend
+cd frontend
 npm install
 npm run dev
+# Vite serves at http://localhost:5173
 ```
 
-### Terminal C — (optional) database maintenance
-Only needed when applying schema changes, embeddings backfill, verification:
-```powershell
-cd e:\Hack-nation_hackathon\Praxis\database
-npm install
-# follow database/README.md for SQL editor steps + optional npm scripts
-```
+Open `http://localhost:5173`, type a hypothesis, watch the canvas fill in.
 
-### First-run expectations / perf notes
-- The first call that loads **Xenova** embeddings may take noticeable time (model download/cache).
-- Full pipeline latency is dominated by **multiple LLM calls** + **Tavily** + embedding loads.
+### Database setup (only if you want persistence + RAG)
+
+The Postgres schema lives in `database/migrations/`. Apply via the Supabase SQL editor (paste each file in order) — `database/scripts/run_migrations.js` requires a custom `exec_sql` RPC which isn't created by default. See `database/README.md` for the operational playbook.
 
 ---
 
-## Testing commands
-
-### Backend smoke tests (from `backend/`)
-These scripts assume the backend is reachable at `BACKEND_URL` or default `PORT` (see `backend/tests/_util.js`).
-
-```powershell
-cd e:\Hack-nation_hackathon\Praxis\backend
-npm run test:health
-npm run test:plans
-npm run test:feedback
-```
-
-`npm run test:generate` is a Groq-specific test and requires a valid `GROQ_API_KEY`.
-
-### Agents unit tests (from `agents/`)
-```powershell
-cd e:\Hack-nation_hackathon\Praxis\agents
-npm install
-npm run test:parser
-npm run test:qc
-npm run test:protocol
-npm run test:materials
-npm run test:budget
-npm run test:validation
-npm run test:full
-```
-
----
-
-## Security & secrets (read this once — it prevents demo disasters)
-
-- **Never commit** `.env` files with real keys (they should remain local).
-- **Never expose `SUPABASE_SERVICE_ROLE_KEY` in the browser**. It is **server-only** (`backend/.env`).
-- The frontend should only use the **anon/publishable** Supabase key for client-side features.
-- Treat **`/api/praxis/feedback`** as trusted demo surface: in production you’d add auth, abuse controls, and stricter validation.
-
----
-
-## Repo map (quick navigation)
+## Repo layout
 
 ```
 Praxis/
-  agents/                 # LLM + Tavily pipeline, embeddings, local feedback cache
-  backend/                # Express API + Supabase persistence + embedding on feedback
-  database/               # SQL migrations/seeds/docs + Node automation scripts
-  frontend/               # Vite + React UI (Mission Control)
+├── frontend/                       Vite + React 19 + TanStack Router
+│   └── src/
+│       ├── routes/                 / (landing + split-view, single component)
+│       ├── components/
+│       │   ├── chat/               ChatInput, MessageList, NoveltyCard, GeneratePlanCTA, ...
+│       │   ├── canvas/             CanvasToolbar, CanvasContent, tabs/{Protocol,Materials,Budget,Timeline,Validation}Tab
+│       │   ├── feedback/           CorrectionPanel, MessageReactions, RegenerateSectionButton, DiffIndicator
+│       │   ├── layout/             PraxisLogo, ThemeToggle
+│       │   └── ui/                 shadcn primitives
+│       ├── store/                  usePraxisStore (Zustand)
+│       └── lib/                    api.ts, exportPDF.ts, praxis-types.ts, theme.tsx
+│
+├── backend/                        Express API
+│   └── src/
+│       ├── routes/                 health, plans, feedback, generate, praxis (the real one)
+│       └── services/               agentsRunner, praxisMapper, supabaseAdmin, localEmbedder
+│
+├── agents/                         The brains (ESM)
+│   ├── orchestrator.js             runPipeline()
+│   ├── agents/                     agent0..agent5
+│   ├── lib/                        groqClient, tavilyClient, embedder, feedbackStore, supabaseFeedback, cacheManager, jsonSafeParse
+│   ├── data/                       reagent_catalog.json
+│   └── cache/                      feedback_store.json + tavily cache (gitignored)
+│
+└── database/                       Supabase schema + scripts
+    ├── migrations/                 001..006 (pgvector, RPCs, indexes)
+    ├── seeds/                      seed_plans.sql, seed_feedback.sql
+    └── README.md                   operational playbook
 ```
 
 ---
 
-## “Challenge-quality” demo hypotheses (sample inputs)
+## Demo script for judges
 
-Use these verbatim in `/dashboard` with the matching domain:
+Use these verbatim with the matching domain pill — they're tuned to land cleanly through the full pipeline:
 
-- **Diagnostics**: paper-based electrochemical biosensor / CRP / whole blood / ELISA-class sensitivity / ≤10 minutes
-- **Gut Health**: LGG + C57BL/6 + FITC-dextran permeability + tight junction proteins
-- **Cell Biology**: trehalose vs DMSO cryoprotectant + HeLa post-thaw viability threshold
-- **Climate**: *Sporomusa ovata* bioelectrochemical CO₂ → acetate rate benchmark threshold
+| Domain | Hypothesis |
+|---|---|
+| **Diagnostics** | A paper-based electrochemical biosensor can detect CRP from whole blood at ELISA-class sensitivity in under 10 minutes. |
+| **Gut Health** | Daily *Lactobacillus rhamnosus* GG supplementation in C57BL/6 mice reduces FITC-dextran intestinal permeability by tightening junction protein expression. |
+| **Cell Biology** | Trehalose outperforms DMSO as a cryoprotectant for HeLa post-thaw viability above 85%. |
+| **Climate** | *Sporomusa ovata* in a bioelectrochemical cell can convert CO₂ to acetate at >2 g/L/day at lab scale. |
+
+Recommended demo flow (≈3 min):
+
+1. **Land** on `/`, hover the new logo (it animates), toggle dark mode, hover the domain pills
+2. **Pick** "Cell Biology", paste the trehalose hypothesis, hit submit
+3. **Narrate** the live status block during QC, point out the **NoveltyCard** with clickable references
+4. Click **Generate Experiment Plan**, watch tabs populate left-to-right
+5. In the chat, type *"reduce equipment cost by 50% — we have access to a shared cytometer"* — watch the **Budget** tab hot-swap with a diff indicator
+6. Click **Export PDF** — open the file, scroll to "Failures and Mitigations", show the clean Unicode rendering and clickable references
+7. Thumbs-up the **Validation** tab; thumbs-down the **Materials** tab with a one-line correction; explain the RAG loop will surface this on the next run
 
 ---
 
-## Current limitations (honest / judge-relevant)
+## Honest limitations
 
-- The UI stepper is **aspirational animation**; true stage timing is dominated by LLM/Tavily/embedding loads.
-- `database/scripts/run_migrations.js` / `run_seeds.js` may require a custom **`exec_sql`** RPC or manual SQL editor application (see `database/README.md`).
-- Catalog coverage is **partial by design** (`agents/data/reagent_catalog.json`); agents may still propose plausible SKUs outside the catalog but must mark them as unverified.
+We'd rather flag these than have them surface during judging:
+
+- **Stage timing in the UI is partly aspirational.** The backend currently runs the full pipeline in one shot; the chat status block animates a stylized stage sequence over the actual network call. The total wall-clock is real (LLM + Tavily + embedding loads dominate); the per-stage durations are smoothed.
+- **Catalog coverage is intentionally partial.** `agents/data/reagent_catalog.json` is curated, not exhaustive. Agents propose plausible SKUs outside the catalog but are instructed to mark them as unverified.
+- **`exec_sql` RPC isn't created by default**, so `database/scripts/run_migrations.js` and `run_seeds.js` may fall back to "apply the SQL manually in the Supabase editor." This is documented in `database/README.md`.
+- **First run is slow.** Loading `Xenova/all-MiniLM-L6-v2` cold-downloads the ONNX weights into the local cache. Subsequent runs are fast.
+- **No auth on `/api/praxis/feedback` yet.** Acceptable for hackathon demo; production would need rate-limiting + reviewer identity verification.
 
 ---
 
-## Where to edit what (for teams extending Praxis)
+## Where to edit what
 
-- **Change prompting / JSON schemas**: `agents/agents/agent*.js`
-- **Change model routing / JSON mode**: `agents/lib/groqClient.js`
-- **Change literature retrieval behavior**: `agents/lib/tavilyClient.js`
-- **Change RAG retrieval logic**:
-  - SQL side: `database/migrations/005_functions.sql`
-  - Agent side merge: `agents/lib/feedbackStore.js` + `agents/lib/supabaseFeedback.js`
-- **Change UI layout / plan rendering**: `frontend/src/routes/dashboard.tsx` + `frontend/src/components/praxis/*`
-- **Change persistence mapping**: `backend/src/routes/praxis.js` + `backend/src/services/praxisMapper.js`
+| You want to change... | Open this |
+|---|---|
+| Prompts / JSON schemas | `agents/agents/agent*.js` |
+| Model rotation / JSON mode | `agents/lib/groqClient.js` |
+| Literature retrieval behavior | `agents/lib/tavilyClient.js` |
+| RAG retrieval (SQL side) | `database/migrations/005_functions.sql` |
+| RAG retrieval (agent side) | `agents/lib/feedbackStore.js`, `agents/lib/supabaseFeedback.js` |
+| Chat-canvas UI | `frontend/src/routes/index.tsx`, `frontend/src/store/usePraxisStore.ts` |
+| Canvas tab rendering | `frontend/src/components/canvas/tabs/*.tsx` |
+| PDF export | `frontend/src/lib/exportPDF.ts` |
+| Persistence mapping | `backend/src/routes/praxis.js`, `backend/src/services/praxisMapper.js` |
+| Theme tokens | `frontend/src/styles.css` (CSS variables under `:root` and `.dark`) |
+| Logo | `frontend/src/components/layout/PraxisLogo.tsx` |
 
 ---
 
 ## License / attribution
 
-Built for a hackathon challenge context (“AI Scientist”). Vendor names, catalog formats, and protocol patterns are used as **realistic research operations** examples and must be verified before real procurement.
+Built for the **AI Scientist** challenge (Fulcrum Science × MIT Club). Vendor names, catalog formats, and protocol patterns are illustrative and must be verified before any real procurement or wet-lab execution. Praxis is a planning tool, not a substitute for trained scientific judgement.
