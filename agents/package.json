@@ -4,6 +4,9 @@
   "type": "module",
   "description": "Praxis AI agent pipeline for scientific experiment planning",
   "main": "orchestrator.js",
+  "engines": {
+    "node": ">=20.11.0 <23"
+  },
   "scripts": {
     "test:parser": "node tests/test_agent0.js",
     "test:qc": "node tests/test_agent1.js",

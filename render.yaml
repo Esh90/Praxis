@@ -1,0 +1,49 @@
+# Render IaC manifest — https://render.com/docs/blueprint-spec
+# Connect this repo to Render as a "Blueprint" and Render will create
+# the service automatically. Set the secret env vars in the dashboard
+# *before* the first deploy (they are marked sync: false below).
+
+services:
+  - type: web
+    name: praxis-backend
+    runtime: node
+    plan: free
+    region: oregon                      # change if you prefer eu/sg/etc.
+    rootDir: backend
+    # Install backend deps + sibling agents/ deps (which are imported at runtime).
+    buildCommand: npm install && cd ../agents && npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # ── Public config (safe to commit) ────────────────────
+      - key: NODE_VERSION
+        value: 20.18.0
+      - key: NODE_ENV
+        value: production
+      # Comma-separated allowlist. Replace with your real frontend URL(s)
+      # after the Cloudflare Worker deploy (Step 4 of DEPLOYMENT.md).
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: GROQ_MODEL_CANDIDATES
+        value: llama-3.3-70b-versatile,llama-3.1-8b-instant,gemma2-9b-it,mixtral-8x7b-32768
+      - key: GEMINI_MODEL_CANDIDATES
+        value: gemini-2.0-flash,gemini-2.0-flash-lite,gemini-2.0-flash-exp
+      - key: TAVILY_MAX_CREDITS_PER_RUN
+        value: "4"
+      - key: ENABLE_TAVILY_CACHE
+        value: "true"
+      - key: DEBUG_PROMPTS
+        value: "false"
+
+      # ── Secrets (set these in the Render dashboard, never commit) ──
+      - key: GROQ_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false

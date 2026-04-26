@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=20.11.0 <23"
+  },
   "scripts": {
     "start": "node server.js",
     "test:health": "node tests/test_health.js",
