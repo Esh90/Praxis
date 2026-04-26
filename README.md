@@ -95,69 +95,76 @@ Type *"the budget is too high, cut equipment by half"* in the chat:
 ## Architecture
 
 ```mermaid
-flowchart LR
-  subgraph Frontend["Frontend: Vite + React 19 + TanStack Router"]
-    UI[Chat-Canvas split UI]
-    STORE[Zustand store<br/>usePraxisStore]
-    PDF[exportPDF.ts<br/>jsPDF + Unicode sanitizer]
-    UI --> STORE
-    UI --> PDF
-  end
+flowchart TB
+    UI[Chat-Canvas UI]
+    STORE[Zustand store usePraxisStore]
+    PDF[exportPDF.ts jsPDF]
 
-  subgraph Backend["Backend: Express ESM"]
     GEN["/api/praxis/generate"]
     CHAT["/api/praxis/chat"]
     FB["/api/praxis/feedback"]
-  end
 
-  subgraph Agents["Agents: orchestrator.js"]
-    A0[Agent 0<br/>Hypothesis Parser]
-    A1[Agent 1<br/>Literature QC]
-    A2[Agent 2<br/>Protocol]
-    A3[Agent 3<br/>Materials]
-    A4[Agent 4<br/>Budget + Timeline]
-    A5[Agent 5<br/>Validation]
-    LLM[groqClient.js<br/>Groq to Gemini rotation]
-    TAV[tavilyClient.js]
-    EMB[embedder.js<br/>Xenova MiniLM 384-d]
+    A0[Agent 0 Parser]
+    A1[Agent 1 Literature QC]
+    A2[Agent 2 Protocol]
+    A3[Agent 3 Materials]
+    A4[Agent 4 Budget and Timeline]
+    A5[Agent 5 Validation]
+
+    LLM[Groq to Gemini rotation]
+    TAV[Tavily search]
+    EMB[Xenova MiniLM 384d]
+
+    PLANS[(experiment_plans)]
+    FEED[(plan_feedback)]
+    RPC[get_relevant_feedback RPC]
+
+    UI --> STORE
+    UI --> PDF
+
+    STORE -->|hypothesis| GEN
+    STORE -->|follow-up| CHAT
+    STORE -->|rating| FB
+
+    GEN --> A0
+    A0 --> A1
+    A1 --> A2
+    A2 --> A3
+    A3 --> A4
+    A4 --> A5
+    GEN --> PLANS
+
     A0 --> LLM
+    A1 --> TAV
+    A1 --> LLM
     A2 --> LLM
     A3 --> LLM
     A4 --> LLM
     A5 --> LLM
-    A1 --> TAV
-    A1 --> LLM
-  end
 
-  subgraph DB["Supabase: Postgres 15 + pgvector"]
-    PLANS[(experiment_plans)]
-    FEED[(plan_feedback)]
-    CACHE[(tavily_cache)]
-    RPC[get_relevant_feedback RPC]
-  end
+    A2 -.-> RPC
+    A3 -.-> RPC
+    A4 -.-> RPC
+    A5 -.-> RPC
+    RPC -.-> FEED
 
-  STORE -- POST hypothesis --> GEN
-  STORE -- POST follow-up --> CHAT
-  STORE -- POST rating --> FB
+    FB --> EMB
+    EMB --> FEED
 
-  GEN --> A0
-  A0 --> A1
-  A1 --> A2
-  A2 --> A3
-  A3 --> A4
-  A4 --> A5
-  GEN --> PLANS
+    CHAT -.-> A2
+    CHAT -.-> FEED
 
-  A2 -. few-shot RAG .-> RPC
-  A3 -. few-shot RAG .-> RPC
-  A4 -. few-shot RAG .-> RPC
-  A5 -. few-shot RAG .-> RPC
-  RPC --> FEED
-  FB --> EMB
-  EMB --> FEED
+    classDef frontend fill:#ede9fe,stroke:#7c3aed,color:#1e1b4b
+    classDef backend  fill:#fef3c7,stroke:#d97706,color:#451a03
+    classDef agent    fill:#dcfce7,stroke:#16a34a,color:#052e16
+    classDef infra    fill:#e0e7ff,stroke:#4f46e5,color:#1e1b4b
+    classDef db       fill:#fce7f3,stroke:#db2777,color:#500724
 
-  CHAT -. re-runs one agent .-> A2
-  CHAT -.-> FEED
+    class UI,STORE,PDF frontend
+    class GEN,CHAT,FB backend
+    class A0,A1,A2,A3,A4,A5 agent
+    class LLM,TAV,EMB infra
+    class PLANS,FEED,RPC db
 ```
 
 **Key integration choice:** the UI talks to the **backend Express API**, not Supabase Edge Functions. Supabase is the **persistence + vector retrieval** layer, not the orchestrator.
