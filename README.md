@@ -96,7 +96,7 @@ Type *"the budget is too high, cut equipment by half"* in the chat:
 
 ```mermaid
 flowchart LR
-  subgraph Frontend["Frontend — Vite + React 19 + TanStack Router"]
+  subgraph Frontend["Frontend: Vite + React 19 + TanStack Router"]
     UI[Chat-Canvas split UI]
     STORE[Zustand store<br/>usePraxisStore]
     PDF[exportPDF.ts<br/>jsPDF + Unicode sanitizer]
@@ -104,28 +104,32 @@ flowchart LR
     UI --> PDF
   end
 
-  subgraph Backend["Backend — Express (ESM)"]
+  subgraph Backend["Backend: Express ESM"]
     GEN["/api/praxis/generate"]
     CHAT["/api/praxis/chat"]
     FB["/api/praxis/feedback"]
   end
 
-  subgraph Agents["Agents — orchestrator.js"]
+  subgraph Agents["Agents: orchestrator.js"]
     A0[Agent 0<br/>Hypothesis Parser]
     A1[Agent 1<br/>Literature QC]
     A2[Agent 2<br/>Protocol]
     A3[Agent 3<br/>Materials]
     A4[Agent 4<br/>Budget + Timeline]
     A5[Agent 5<br/>Validation]
-    LLM[groqClient.js<br/>Groq → Gemini rotation]
+    LLM[groqClient.js<br/>Groq to Gemini rotation]
     TAV[tavilyClient.js]
     EMB[embedder.js<br/>Xenova MiniLM 384-d]
-    A0 & A2 & A3 & A4 & A5 --> LLM
+    A0 --> LLM
+    A2 --> LLM
+    A3 --> LLM
+    A4 --> LLM
+    A5 --> LLM
     A1 --> TAV
     A1 --> LLM
   end
 
-  subgraph DB["Supabase — Postgres 15 + pgvector"]
+  subgraph DB["Supabase: Postgres 15 + pgvector"]
     PLANS[(experiment_plans)]
     FEED[(plan_feedback)]
     CACHE[(tavily_cache)]
@@ -136,14 +140,23 @@ flowchart LR
   STORE -- POST follow-up --> CHAT
   STORE -- POST rating --> FB
 
-  GEN --> A0 --> A1 --> A2 --> A3 --> A4 --> A5
+  GEN --> A0
+  A0 --> A1
+  A1 --> A2
+  A2 --> A3
+  A3 --> A4
+  A4 --> A5
   GEN --> PLANS
 
-  A2 & A3 & A4 & A5 -. retrieve few-shot .-> RPC
+  A2 -. few-shot RAG .-> RPC
+  A3 -. few-shot RAG .-> RPC
+  A4 -. few-shot RAG .-> RPC
+  A5 -. few-shot RAG .-> RPC
   RPC --> FEED
-  FB --> EMB --> FEED
+  FB --> EMB
+  EMB --> FEED
 
-  CHAT -. re-runs single agent .-> A2
+  CHAT -. re-runs one agent .-> A2
   CHAT -.-> FEED
 ```
 
