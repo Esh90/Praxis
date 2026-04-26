@@ -47,14 +47,37 @@ function doiFromUrl(url) {
   return u || 'n/a';
 }
 
+function sourceLabelFromUrl(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    if (host.includes('pubmed') || host.includes('ncbi.nlm.nih')) return 'PubMed';
+    if (host.includes('arxiv')) return 'arXiv';
+    if (host.includes('biorxiv') || host.includes('medrxiv')) return 'bioRxiv / medRxiv';
+    if (host.includes('nature.com')) return 'Nature';
+    if (host.includes('sciencedirect')) return 'ScienceDirect';
+    if (host.includes('cell.com')) return 'Cell';
+    if (host.includes('frontiersin')) return 'Frontiers';
+    if (host.includes('plos')) return 'PLOS';
+    return host;
+  } catch {
+    return 'Source';
+  }
+}
+
 export function referencesUiFromAgent(refs) {
   const list = Array.isArray(refs) ? refs : [];
-  return list.slice(0, 3).map((r) => ({
-    title: r.title || 'Reference',
-    authors: 'Literature match',
-    year: yearFromUrl(r.url),
-    doi: doiFromUrl(r.url),
-  }));
+  return list.slice(0, 3).map((r) => {
+    const url = String(r.url || '');
+    return {
+      title: r.title || 'Reference',
+      authors: 'Literature match',
+      year: yearFromUrl(url),
+      doi: doiFromUrl(url),
+      url,
+      source: sourceLabelFromUrl(url),
+      relevance: typeof r.relevance === 'number' ? r.relevance : null,
+    };
+  });
 }
 
 function parseDurationToMinutes(duration) {
@@ -77,6 +100,7 @@ export function protocolUiFromAgent(protocolObj) {
     title: st.title,
     description: st.description,
     duration_min: parseDurationToMinutes(st.duration),
+    critical_note: st.critical_note || st.note || null,
   }));
 }
 
@@ -88,6 +112,7 @@ export function materialsUiFromAgent(materialsArr) {
     supplier: m.supplier || 'TBD',
     catalog: m.catalog_number || m.catalog || 'TBD',
     cost: Number(m.total_cost_usd ?? m.unit_cost_usd ?? 0) || 0,
+    unit_cost: Number(m.unit_cost_usd ?? 0) || null,
     quantity: Number(String(m.quantity || '1').replace(/[^\d.]/g, '')) || 1,
     unit: m.unit || 'ea',
   }));
@@ -114,6 +139,8 @@ export function timelineUiFromAgent(timelineObj) {
     phase: p.phase || 'Phase',
     weeks: Number(p.duration_weeks || 1) || 1,
     start_week: Number(p.start_week || 1) || 1,
+    activities: Array.isArray(p.activities) ? p.activities.map(String) : [],
+    dependencies: Array.isArray(p.dependencies) ? p.dependencies.map(String) : [],
   }));
 }
 
@@ -126,6 +153,8 @@ export function validationUiFromAgent(validationObj) {
     statistical_power: 0.8,
     sample_size_justification: String(validationObj?.sample_size_rationale || validationObj?.primary_success_criterion || 'See protocol and validation tabs for acceptance criteria.'),
     controls: controls.length > 0 ? controls : ['Positive/negative controls as specified in protocol', 'Assay calibration standards'],
+    primary_success_criterion: validationObj?.primary_success_criterion || null,
+    significance_test: validationObj?.statistical_test || validationObj?.significance_test || null,
     risks:
       risks.length > 0
         ? risks
@@ -162,6 +191,8 @@ export function buildPraxisPlanUi({ hypothesis, domainUi, pipelineResult, planId
       hypothesis,
       domain: domainForUi,
       experiment_type: parsed.experiment_type || fp?.metadata?.experiment_type || '',
+      plan_title: fp?.plan_title || null,
+      executive_summary: fp?.executive_summary || null,
       generated_at: fp?.metadata?.generated_at || new Date().toISOString(),
       duration_ms: pipelineResult?.durationMs ?? null,
       pipeline_errors: pipelineResult?.errors?.length ?? 0,

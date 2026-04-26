@@ -3,7 +3,15 @@ import path from 'path';
 import { pathToFileURL } from 'url';
 
 import { importAgentsOrchestrator } from '../services/agentsRunner.js';
-import { buildPraxisPlanUi, slugDomainFromUi } from '../services/praxisMapper.js';
+import {
+  buildPraxisPlanUi,
+  slugDomainFromUi,
+  protocolUiFromAgent,
+  materialsUiFromAgent,
+  budgetUiFromAgent,
+  timelineUiFromAgent,
+  validationUiFromAgent,
+} from '../services/praxisMapper.js';
 import { getSupabaseAdmin } from '../services/supabaseAdmin.js';
 import { embedText384 } from '../services/localEmbedder.js';
 
@@ -141,6 +149,133 @@ praxisRouter.post('/feedback', async (req, res) => {
     }
 
     return res.status(201).json({ ok: true, id: data?.id });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// /api/praxis/chat — follow-up turn after a plan is generated.
+// Classifies which section the user wants to revise (using a small LLM
+// call), persists the request as a correction in the local feedback
+// store (so future generations benefit), then re-runs only the single
+// relevant agent with the user instruction injected. Returns the
+// patched section in the UI shape so the canvas can update in-place.
+// ─────────────────────────────────────────────────────────────────────
+praxisRouter.post('/chat', async (req, res) => {
+  try {
+    const message = String(req.body?.message || '').trim();
+    const plan = req.body?.plan;
+    if (!message) return res.status(400).json({ ok: false, error: 'message is required' });
+    if (!plan?.meta?.hypothesis) return res.status(400).json({ ok: false, error: 'plan with meta is required' });
+
+    const { agentsRoot } = await importAgentsOrchestrator();
+
+    // Classify section using cheap heuristic + LLM fallback
+    const sections = ['protocol', 'materials', 'budget', 'timeline', 'validation'];
+    const lower = message.toLowerCase();
+    let section = sections.find((s) => lower.includes(s)) || null;
+    if (!section) {
+      if (/(reagent|antibod|catalog|supplier|sku|kit|primer)/.test(lower)) section = 'materials';
+      else if (/(price|cost|\$|budget|usd|expense)/.test(lower)) section = 'budget';
+      else if (/(schedule|week|gantt|timeline|delivery|procure)/.test(lower)) section = 'timeline';
+      else if (/(power|n=|sample size|control|stat|replicate|criterion|p ?<)/.test(lower)) section = 'validation';
+      else section = 'protocol';
+    }
+
+    // Persist as a feedback example for future RAG retrieval
+    try {
+      const feedbackStoreUrl = pathToFileURL(path.join(agentsRoot, 'lib', 'feedbackStore.js')).href;
+      const { addFeedback } = await import(feedbackStoreUrl);
+      await addFeedback({
+        section,
+        domain: plan?.meta?.domain ? slugDomainFromUi(plan.meta.domain) : 'other',
+        experiment_type: plan?.meta?.experiment_type || '',
+        original: JSON.stringify(plan?.[section] ?? {}, null, 2).slice(0, 4000),
+        correction: message,
+        reason: 'Inline scientist follow-up',
+        rating: 2,
+      });
+    } catch (e) {
+      console.warn('[praxis/chat] feedback store unavailable:', e?.message);
+    }
+
+    // Re-run just the relevant agent. We re-parse the hypothesis to get
+    // a fresh structured payload, then run the section-specific agent.
+    const parserPath = pathToFileURL(path.join(agentsRoot, 'agents', 'agent0_parser.js')).href;
+    const { parseHypothesis } = await import(parserPath);
+    const parsed = await parseHypothesis(plan.meta.hypothesis);
+    if (!parsed?.ok) return res.status(500).json({ ok: false, error: parsed?.error || 'parse failed' });
+
+    let updated = null;
+    let summary = '';
+
+    if (section === 'protocol') {
+      const url = pathToFileURL(path.join(agentsRoot, 'agents', 'agent2_protocol.js')).href;
+      const { generateProtocol } = await import(url);
+      const r = await generateProtocol(parsed.data, plan.meta.hypothesis);
+      if (!r.ok) return res.status(500).json({ ok: false, error: r.error });
+      updated = protocolUiFromAgent(r.data?.protocol);
+      summary = "I've updated the **protocol** based on your feedback.";
+    } else if (section === 'materials') {
+      const protocolUrl = pathToFileURL(path.join(agentsRoot, 'agents', 'agent2_protocol.js')).href;
+      const { generateProtocol } = await import(protocolUrl);
+      const protoResult = await generateProtocol(parsed.data, plan.meta.hypothesis);
+      const matsUrl = pathToFileURL(path.join(agentsRoot, 'agents', 'agent3_materials.js')).href;
+      const { generateMaterials } = await import(matsUrl);
+      const r = await generateMaterials(protoResult.data, parsed.data, plan.meta.hypothesis);
+      if (!r.ok) return res.status(500).json({ ok: false, error: r.error });
+      updated = materialsUiFromAgent(r.data?.materials);
+      summary = "I've updated the **materials** list using your latest correction.";
+    } else if (section === 'budget') {
+      const protocolUrl = pathToFileURL(path.join(agentsRoot, 'agents', 'agent2_protocol.js')).href;
+      const { generateProtocol } = await import(protocolUrl);
+      const protoResult = await generateProtocol(parsed.data, plan.meta.hypothesis);
+      const matsUrl = pathToFileURL(path.join(agentsRoot, 'agents', 'agent3_materials.js')).href;
+      const { generateMaterials } = await import(matsUrl);
+      const matsResult = await generateMaterials(protoResult.data, parsed.data, plan.meta.hypothesis);
+      const budUrl = pathToFileURL(path.join(agentsRoot, 'agents', 'agent4_budget_timeline.js')).href;
+      const { generateBudgetTimeline } = await import(budUrl);
+      const r = await generateBudgetTimeline(
+        protoResult.data,
+        matsResult.data || { subtotal_usd: 0, materials: [] },
+        parsed.data,
+        plan.meta.hypothesis,
+      );
+      if (!r.ok) return res.status(500).json({ ok: false, error: r.error });
+      updated = budgetUiFromAgent(r.data?.budget, matsResult?.data?.subtotal_usd);
+      summary = "I've recalculated the **budget**.";
+    } else if (section === 'timeline') {
+      const protocolUrl = pathToFileURL(path.join(agentsRoot, 'agents', 'agent2_protocol.js')).href;
+      const { generateProtocol } = await import(protocolUrl);
+      const protoResult = await generateProtocol(parsed.data, plan.meta.hypothesis);
+      const matsUrl = pathToFileURL(path.join(agentsRoot, 'agents', 'agent3_materials.js')).href;
+      const { generateMaterials } = await import(matsUrl);
+      const matsResult = await generateMaterials(protoResult.data, parsed.data, plan.meta.hypothesis);
+      const budUrl = pathToFileURL(path.join(agentsRoot, 'agents', 'agent4_budget_timeline.js')).href;
+      const { generateBudgetTimeline } = await import(budUrl);
+      const r = await generateBudgetTimeline(
+        protoResult.data,
+        matsResult.data || { subtotal_usd: 0, materials: [] },
+        parsed.data,
+        plan.meta.hypothesis,
+      );
+      if (!r.ok) return res.status(500).json({ ok: false, error: r.error });
+      updated = timelineUiFromAgent(r.data?.timeline);
+      summary = "I've updated the **timeline** to reflect your input.";
+    } else {
+      const protocolUrl = pathToFileURL(path.join(agentsRoot, 'agents', 'agent2_protocol.js')).href;
+      const { generateProtocol } = await import(protocolUrl);
+      const protoResult = await generateProtocol(parsed.data, plan.meta.hypothesis);
+      const valUrl = pathToFileURL(path.join(agentsRoot, 'agents', 'agent5_validation.js')).href;
+      const { generateValidation } = await import(valUrl);
+      const r = await generateValidation(protoResult.data, parsed.data, plan.meta.hypothesis);
+      if (!r.ok) return res.status(500).json({ ok: false, error: r.error });
+      updated = validationUiFromAgent(r.data?.validation);
+      summary = "I've updated the **validation** approach.";
+    }
+
+    return res.status(200).json({ ok: true, section, updated, summary });
   } catch (err) {
     return res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }

@@ -1,129 +1,168 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { Button } from "@/components/ui/button";
-import { Atom, Workflow, Database, GitBranch, Github, FileText, Users, ArrowRight, Sparkles } from "lucide-react";
+import { createFileRoute } from "@tanstack/react-router";
+import { BookOpen, GitBranch, Workflow } from "lucide-react";
+import { ChatInput } from "@/components/chat/ChatInput";
+import { ChatHeader } from "@/components/chat/ChatHeader";
+import { MessageList } from "@/components/chat/MessageList";
+import { CanvasToolbar } from "@/components/canvas/CanvasToolbar";
+import { CanvasContent } from "@/components/canvas/CanvasContent";
+import { ThemeToggle } from "@/components/layout/ThemeToggle";
+import { PraxisLogo } from "@/components/layout/PraxisLogo";
+import { usePraxisStore } from "@/store/usePraxisStore";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Praxis — From Hypothesis to Runnable Experiment Plan" },
-      { name: "description", content: "The AI Scientist for Principal Investigators. Agentic orchestration, real supplier catalog grounding, and a feedback loop that learns from your corrections." },
-      { property: "og:title", content: "Praxis — AI Experiment Planning" },
-      { property: "og:description", content: "From hypothesis to runnable plan in minutes." },
+      { title: "Praxis — From hypothesis to runnable experiment" },
+      {
+        name: "description",
+        content:
+          "Describe your scientific hypothesis. Praxis runs the literature check, builds the protocol, sources the materials, and estimates the budget — in minutes.",
+      },
     ],
   }),
-  component: Landing,
+  component: PraxisApp,
 });
 
-function Landing() {
-  return (
-    <div className="min-h-screen relative overflow-hidden">
-      <div className="absolute inset-0 gradient-hero pointer-events-none" />
-      <div className="absolute inset-0 bg-grid opacity-40 pointer-events-none [mask-image:radial-gradient(ellipse_at_center,black,transparent_70%)]" />
+function PraxisApp() {
+  const isActive = usePraxisStore((s) => s.isActive);
+  return isActive ? <SplitView /> : <LandingView />;
+}
 
-      <header className="relative z-10 border-b border-border/40">
-        <div className="container mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="size-8 rounded-md bg-gradient-to-br from-primary to-accent grid place-items-center glow">
-              <Atom className="size-4 text-primary-foreground" />
-            </div>
-            <span className="font-semibold tracking-tight">Praxis</span>
-            <span className="text-xs font-mono text-muted-foreground ml-2 px-1.5 py-0.5 rounded border border-border">v0.1</span>
-          </div>
-          <nav className="flex items-center gap-2">
-            <Link to="/dashboard">
-              <Button size="sm" className="bg-gradient-to-r from-primary to-accent">Open Mission Control</Button>
-            </Link>
-          </nav>
+// ──────────────────────────────────────────────────────────────────────
+// LANDING
+// ──────────────────────────────────────────────────────────────────────
+function LandingView() {
+  const submitHypothesis = usePraxisStore((s) => s.submitHypothesis);
+
+  return (
+    <div className="relative min-h-screen bg-[var(--bg-primary)] text-[var(--text-primary)]">
+      {/* subtle radial grid background */}
+      <div className="pointer-events-none absolute inset-0 bg-grid-subtle opacity-50" aria-hidden />
+
+      {/* Top nav */}
+      <header
+        className={cn(
+          "relative z-10 flex h-[60px] items-center justify-between px-6",
+          "border-b border-[var(--border-subtle)] bg-[var(--bg-primary)]/80 glass-blur",
+        )}
+      >
+        <PraxisLogo size="lg" />
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
         </div>
       </header>
 
+      {/* Hero */}
       <main className="relative z-10">
-        {/* Hero */}
-        <section className="container mx-auto px-6 pt-24 pb-32 text-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full glass text-xs font-mono text-muted-foreground mb-8">
-            <span className="size-1.5 rounded-full bg-success pulse-dot" />
-            Agentic Orchestration · Live
-          </div>
-          <h1 className="text-5xl md:text-7xl font-bold tracking-tighter max-w-4xl mx-auto leading-[1.05]">
-            From Hypothesis to <span className="gradient-text">Runnable Experiment Plan</span> in Minutes.
-          </h1>
-          <p className="mt-6 text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto">
-            The AI Scientist for Principal Investigators. Compressed supply chain, protocol generation, and budget modeling — grounded in real supplier catalogs.
+        <section className="mx-auto flex min-h-[calc(100vh-60px)] max-w-[840px] flex-col items-center justify-center px-6 pb-16 text-center">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
+            Fulcrum Science × MIT Club
           </p>
-          <div className="mt-10 flex items-center justify-center gap-3">
-            <Link to="/dashboard">
-              <Button size="lg" className="bg-gradient-to-r from-primary to-accent glow gap-2">
-                Open Mission Control <ArrowRight className="size-4" />
-              </Button>
-            </Link>
-          </div>
 
-          {/* Mini console preview */}
-          <div className="mt-20 max-w-3xl mx-auto glass rounded-xl p-1 shadow-elevated">
-            <div className="flex items-center gap-1.5 px-4 py-2 border-b border-border/50">
-              <div className="size-2.5 rounded-full bg-destructive/70" />
-              <div className="size-2.5 rounded-full bg-warning/70" />
-              <div className="size-2.5 rounded-full bg-success/70" />
-              <span className="ml-3 text-xs font-mono text-muted-foreground">praxis://mission-control</span>
-            </div>
-            <div className="p-6 font-mono text-sm text-left space-y-2">
-              <div className="text-muted-foreground">$ praxis generate</div>
-              <div className="text-success">✓ Parsing hypothesis</div>
-              <div className="text-success">✓ Checking literature QC</div>
-              <div className="text-success">✓ Fetching RAG context</div>
-              <div className="text-primary flex items-center gap-2">
-                <span className="size-1.5 rounded-full bg-primary pulse-dot" />
-                Generating plan sections...
-              </div>
-            </div>
+          <h1
+            className={cn(
+              "mt-5 font-serif text-[40px] sm:text-[48px] leading-[1.05] text-[var(--text-primary)]",
+              "max-w-[720px] animate-[slideUp_400ms_ease]",
+            )}
+          >
+            From hypothesis to
+            <br />
+            <span className="italic">runnable experiment.</span>
+          </h1>
+
+          <p
+            className={cn(
+              "mt-5 max-w-[600px] text-[16px] leading-[1.6] text-[var(--text-secondary)]",
+              "animate-[slideUp_500ms_ease_80ms_both]",
+            )}
+          >
+            Describe your scientific question in plain language. Praxis runs the
+            literature check, builds the full protocol, sources the materials, and
+            estimates the budget — in minutes, not weeks.
+          </p>
+
+          <div className="mt-10 w-full animate-[slideUp_600ms_ease_160ms_both]">
+            <ChatInput variant="landing" onSubmit={submitHypothesis} />
           </div>
         </section>
 
-        {/* Features */}
-        <section className="container mx-auto px-6 py-24">
-          <div className="grid md:grid-cols-3 gap-6">
-            {[
-              { icon: Workflow, title: "Agentic Orchestration", desc: "Chained AI models that think like senior CRO scientists — parsing, validating, and synthesizing." },
-              { icon: Database, title: "Real-World Grounding", desc: "Catalog numbers and supply chain costs sourced from major suppliers, not hallucinated." },
-              { icon: GitBranch, title: "The Feedback Loop", desc: "RAG-powered learning that continuously improves based on your corrections and reviews." },
-            ].map((f) => (
-              <div key={f.title} className="glass rounded-xl p-6 hover:border-primary/40 transition group">
-                <div className="size-10 rounded-lg bg-primary/10 border border-primary/20 grid place-items-center mb-4 group-hover:glow transition">
-                  <f.icon className="size-5 text-primary" />
-                </div>
-                <h3 className="font-semibold text-lg mb-2">{f.title}</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">{f.desc}</p>
-              </div>
+        {/* Feature strip */}
+        <section className="mx-auto max-w-[1080px] px-6 pb-24">
+          <div className="grid gap-4 md:grid-cols-3">
+            {FEATURES.map((f) => (
+              <article
+                key={f.title}
+                className={cn(
+                  "rounded-[12px] border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-5",
+                  "transition-shadow duration-200 hover:shadow-[var(--shadow-md)]",
+                )}
+              >
+                <f.icon
+                  className="h-5 w-5 text-[var(--accent-primary)]"
+                  strokeWidth={2}
+                  aria-hidden
+                />
+                <h3 className="mt-3 text-[14px] font-medium text-[var(--text-primary)]">
+                  {f.title}
+                </h3>
+                <p className="mt-1 text-[13px] leading-[1.55] text-[var(--text-secondary)]">
+                  {f.desc}
+                </p>
+              </article>
             ))}
           </div>
         </section>
-
-        {/* CTA strip */}
-        <section className="container mx-auto px-6 py-16">
-          <div className="glass rounded-2xl p-10 text-center relative overflow-hidden">
-            <Sparkles className="absolute top-6 right-6 size-5 text-primary/40" />
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight">Ready to compress your research cycle?</h2>
-            <p className="mt-3 text-muted-foreground">Join principal investigators using Praxis to plan experiments at the speed of thought.</p>
-            <Link to="/dashboard">
-              <Button size="lg" className="mt-6 bg-gradient-to-r from-primary to-accent glow">Open Mission Control</Button>
-            </Link>
-          </div>
-        </section>
       </main>
+    </div>
+  );
+}
 
-      <footer className="relative z-10 border-t border-border/40 mt-12">
-        <div className="container mx-auto px-6 py-8 flex flex-col md:flex-row items-center justify-between gap-4 text-sm text-muted-foreground">
-          <div className="flex items-center gap-2">
-            <Atom className="size-4" />
-            <span className="font-mono">© 2026 Praxis Labs</span>
-          </div>
-          <nav className="flex items-center gap-6">
-            <a href="#" className="flex items-center gap-1.5 hover:text-foreground transition"><Github className="size-4" /> GitHub</a>
-            <a href="#" className="flex items-center gap-1.5 hover:text-foreground transition"><FileText className="size-4" /> Technical Docs</a>
-            <a href="#" className="flex items-center gap-1.5 hover:text-foreground transition"><Users className="size-4" /> Team</a>
-          </nav>
-        </div>
-      </footer>
+const FEATURES = [
+  {
+    icon: BookOpen,
+    title: "Literature QC",
+    desc: "Real-time novelty signal with sourced references from PubMed and arXiv before any plan is written.",
+  },
+  {
+    icon: Workflow,
+    title: "Full Protocol",
+    desc: "Stepwise bench-realistic protocol, materials with catalog numbers, budget, and timeline — all on one canvas.",
+  },
+  {
+    icon: GitBranch,
+    title: "Feedback Loop",
+    desc: "Corrections you make are stored and surfaced as few-shot context the next time a section is generated.",
+  },
+];
+
+// ──────────────────────────────────────────────────────────────────────
+// SPLIT VIEW
+// ──────────────────────────────────────────────────────────────────────
+function SplitView() {
+  const submitFollowUp = usePraxisStore((s) => s.submitFollowUp);
+  const status = usePraxisStore((s) => s.pipelineStatus);
+  const inputDisabled = status === "qc" || status === "generating" || status === "regenerating";
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-[var(--bg-primary)] animate-[fadeIn_250ms_ease]">
+      {/* LEFT — Chat */}
+      <aside
+        className={cn(
+          "flex shrink-0 flex-col border-r border-[var(--border-subtle)] animate-[slideInLeft_300ms_ease]",
+          "min-w-[320px] max-w-[520px] w-full md:w-[var(--panel-left-width)]",
+        )}
+      >
+        <ChatHeader />
+        <MessageList />
+        <ChatInput variant="panel" onSubmit={submitFollowUp} disabled={inputDisabled} />
+      </aside>
+
+      {/* RIGHT — Canvas */}
+      <section className="hidden md:flex flex-1 flex-col overflow-hidden animate-[slideInRight_300ms_ease]">
+        <CanvasToolbar />
+        <CanvasContent />
+      </section>
     </div>
   );
 }
