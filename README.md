@@ -124,10 +124,8 @@ Type *"the budget is too high, cut equipment by half"* in the chat:
 
 ## Architecture
 
-![Praxis architecture](docs/architecture-diagram.png)
-
 <details>
-<summary>Mermaid source (click to expand — edit <code>docs/architecture.mmd</code> to regenerate the PNG)</summary>
+<summary><b>Expand to view architecture diagram</b> (rendered with Mermaid)</summary>
 
 ```mermaid
 flowchart TB
