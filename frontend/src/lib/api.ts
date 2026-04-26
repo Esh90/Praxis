@@ -8,24 +8,16 @@ function apiBase(): string {
   return "http://localhost:3002";
 }
 
-function inferDomainFromHypothesis(text: string): string {
-  const t = text.toLowerCase();
-  if (/(crp|biosensor|elisa|electrochem|diagnostic|whole blood)/.test(t)) return "Diagnostics";
-  if (/(gut|microbiome|fitc|tight junction|permeability|microbi|c57bl|lactobacill)/.test(t))
-    return "Gut Health";
-  if (/(co2|sporomusa|bioelectrochem|carbon|climate|emission|methane)/.test(t)) return "Climate";
-  if (/(hela|cryopreserv|cell|trehalose|dmso|viability|cytometry)/.test(t)) return "Cell Biology";
-  return "Gut Health";
-}
-
-export async function generatePlan(hypothesis: string, domainUi?: string): Promise<PraxisPlan> {
-  const domain = domainUi ?? inferDomainFromHypothesis(hypothesis);
+export async function generatePlan(hypothesis: string, _domainUi?: string | null): Promise<PraxisPlan> {
+  // Domain is no longer user-selected — Agent 0 auto-classifies from
+  // the hypothesis text. We still send "Other" as a placeholder so
+  // older backend deployments that require the field don't reject.
   let resp: Response;
   try {
     resp = await fetch(`${apiBase()}/api/praxis/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ hypothesis, domain }),
+      body: JSON.stringify({ hypothesis, domain: "Other" }),
     });
   } catch {
     throw new Error(
@@ -124,26 +116,32 @@ function domainSlug(domainUi: string) {
   return map[domainUi] ?? "other";
 }
 
-export async function submitFeedbackApi(b: FeedbackBody): Promise<{ id?: string }> {
-  if (!b.planId) {
-    // Without a planId the backend requires it; return a soft fail so the UI
-    // can still acknowledge the user's input (we keep it client-side for the demo).
-    return {};
+export async function submitFeedbackApi(b: FeedbackBody): Promise<{ id?: string; local?: boolean }> {
+  // We ALWAYS try the backend, even without a planId — the backend will
+  // write to its local feedback store so future regenerations can use
+  // the correction as a few-shot. This is what makes the system
+  // actually learn from a user's "too expensive" rating.
+  let resp: Response;
+  try {
+    resp = await fetch(`${apiBase()}/api/praxis/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        plan_id: b.planId,
+        section: b.section,
+        rating: b.rating,
+        original_content: b.originalContent,
+        correction: b.correction,
+        correction_reason: b.reason,
+        experiment_type: b.experimentType ?? "",
+        domain: domainSlug(b.domainUi),
+      }),
+    });
+  } catch {
+    // Network failure — feedback was already mirrored to localStorage by
+    // the store, so we can swallow this without surfacing an error.
+    return { local: true };
   }
-  const resp = await fetch(`${apiBase()}/api/praxis/feedback`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      plan_id: b.planId,
-      section: b.section,
-      rating: b.rating,
-      original_content: b.originalContent,
-      correction: b.correction,
-      correction_reason: b.reason,
-      experiment_type: b.experimentType ?? "",
-      domain: domainSlug(b.domainUi),
-    }),
-  });
   const payload: unknown = await resp.json().catch(() => null);
   if (!resp.ok) {
     const msg =
@@ -153,5 +151,5 @@ export async function submitFeedbackApi(b: FeedbackBody): Promise<{ id?: string 
         : `HTTP ${resp.status}`;
     throw new Error(msg);
   }
-  return (payload as { id?: string }) ?? {};
+  return (payload as { id?: string; local?: boolean }) ?? {};
 }

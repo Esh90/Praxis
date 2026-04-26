@@ -50,6 +50,21 @@ function isModelMissing(err) {
 }
 
 /**
+ * Detects Groq's strict JSON validator rejection. When the LLM emits
+ * non-literal numbers (e.g. `145/50`) or Python comprehensions inside
+ * the JSON, Groq returns 400 with code "json_validate_failed". The
+ * payload is gone — we never see the raw text. Recovery strategy: re-run
+ * the same prompt without response_format=json_object so we can repair
+ * the output ourselves with safeParse.
+ */
+function isJsonValidateFailed(err) {
+  const status = err?.status;
+  const code = err?.error?.code || err?.code;
+  const msg = err?.message || String(err);
+  return status === 400 && (code === 'json_validate_failed' || /json_validate_failed/i.test(msg));
+}
+
+/**
  * Main LLM call function used by all agents.
  *
  * Provider rotation order on token-quota errors:
@@ -74,36 +89,48 @@ export async function callLLM(systemPrompt, userContent, options = {}) {
   const errors = [];
 
   for (const model of GROQ_CANDIDATES) {
-    try {
-      const completion = await groq.chat.completions.create({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userContent },
-        ],
-        max_tokens: maxTokens,
-        temperature,
-        ...(expectJSON && { response_format: { type: 'json_object' } }),
-      });
+    // First attempt uses Groq's strict JSON mode for clean structured
+    // output. If that trips json_validate_failed, retry the same model
+    // once in plain text mode so safeParse can repair the response.
+    const attemptModes = expectJSON ? ['json', 'text'] : ['text'];
 
-      if (errors.length > 0) {
-        console.log(`[Groq] Recovered on model "${model}" after ${errors.length} fallback hop(s).`);
-      }
-      return completion.choices[0]?.message?.content || '';
-    } catch (err) {
-      const status = err?.status ?? 'n/a';
-      const reason = err?.message || String(err);
-      errors.push({ provider: 'groq', model, status, reason });
+    for (const mode of attemptModes) {
+      try {
+        const completion = await groq.chat.completions.create({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userContent },
+          ],
+          max_tokens: maxTokens,
+          temperature,
+          ...(mode === 'json' && { response_format: { type: 'json_object' } }),
+        });
 
-      if (isRateLimit(err)) {
-        console.warn(`[Groq] ${model} rate-limited (status=${status}). Trying next model...`);
-        continue;
+        if (errors.length > 0 || mode === 'text') {
+          console.log(
+            `[Groq] Recovered on model "${model}" (mode=${mode}) after ${errors.length} fallback hop(s).`,
+          );
+        }
+        return completion.choices[0]?.message?.content || '';
+      } catch (err) {
+        const status = err?.status ?? 'n/a';
+        const reason = err?.message || String(err);
+        errors.push({ provider: 'groq', model, mode, status, reason });
+
+        if (isJsonValidateFailed(err) && mode === 'json') {
+          console.warn(
+            `[Groq] ${model} returned json_validate_failed. Retrying same model without response_format...`,
+          );
+          continue; // try the next mode (text) for the same model
+        }
+        if (isRateLimit(err) || isModelMissing(err)) {
+          const tag = isRateLimit(err) ? `rate-limited (${status})` : 'unavailable (404)';
+          console.warn(`[Groq] ${model} ${tag}. Trying next model...`);
+          break; // skip remaining modes for this model
+        }
+        throw enrichError(err, errors);
       }
-      if (isModelMissing(err)) {
-        console.warn(`[Groq] ${model} not available (404). Trying next model...`);
-        continue;
-      }
-      throw enrichError(err, errors);
     }
   }
 

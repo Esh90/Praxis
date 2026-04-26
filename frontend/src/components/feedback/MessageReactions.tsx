@@ -2,19 +2,36 @@ import { useState } from "react";
 import { Flag, ThumbsDown, ThumbsUp } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { CorrectionPanel } from "@/components/feedback/CorrectionPanel";
+import { SafeInlineMenu } from "@/components/feedback/SafeInlineMenu";
 import { usePraxisStore, type CanvasTab } from "@/store/usePraxisStore";
+import { safeAsyncHandler, safeHandler } from "@/lib/safeHandler";
 
 interface Props {
   messageId: string;
   originalContent: string;
   section?: string;
+}
+
+const FLAG_OPTIONS = [
+  { id: "harmful", label: "Report as harmful" },
+  { id: "inaccuracy", label: "Report inaccuracy" },
+  { id: "hallucination", label: "Report hallucination" },
+];
+
+const REPORT_LABEL: Record<string, string> = {
+  harmful: "Reported as harmful",
+  inaccuracy: "Reported inaccuracy",
+  hallucination: "Reported hallucination",
+};
+
+function safeToast(kind: "success" | "error", msg: string) {
+  try {
+    if (kind === "success") toast.success(msg);
+    else toast.error(msg);
+  } catch (err) {
+    console.warn("[praxis] toast call failed:", err, msg);
+  }
 }
 
 export function MessageReactions({ messageId, originalContent, section }: Props) {
@@ -24,27 +41,31 @@ export function MessageReactions({ messageId, originalContent, section }: Props)
 
   const sectionTag = (section as CanvasTab) ?? "general";
 
-  async function thumbsUp() {
+  const thumbsUp = safeAsyncHandler(async () => {
     setReaction("up");
     try {
       await submit({
         section: sectionTag,
         rating: 5,
         reason: "Positive feedback (thumbs up)",
-        correction: "",
+        correction: "approved",
         originalContent,
         messageId,
       });
-      toast.success("Thanks!");
-    } catch {
-      // silent: positive feedback isn't critical
+      safeToast("success", "Thanks!");
+    } catch (err) {
+      console.warn("[praxis] thumbs-up submission failed:", err);
     }
-  }
+  }, "Could not record feedback");
 
-  function thumbsDown() {
+  const thumbsDown = safeHandler(() => {
     setReaction("down");
     setShowPanel(true);
-  }
+  });
+
+  const onReportSelect = safeHandler((id: string) => {
+    safeToast("success", REPORT_LABEL[id] ?? "Reported");
+  });
 
   return (
     <>
@@ -81,8 +102,12 @@ export function MessageReactions({ messageId, originalContent, section }: Props)
             )}
           />
         </ReactionButton>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+
+        <SafeInlineMenu
+          align="right"
+          items={FLAG_OPTIONS}
+          onSelect={onReportSelect}
+          trigger={
             <button
               type="button"
               aria-label="Flag"
@@ -93,19 +118,8 @@ export function MessageReactions({ messageId, originalContent, section }: Props)
             >
               <Flag className="h-[12px] w-[12px]" />
             </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="text-[12px]">
-            <DropdownMenuItem onClick={() => toast.success("Reported")}>
-              Report as harmful
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => toast.success("Reported")}>
-              Report inaccuracy
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => toast.success("Reported")}>
-              Report hallucination
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+          }
+        />
       </div>
 
       {showPanel && (
@@ -113,7 +127,7 @@ export function MessageReactions({ messageId, originalContent, section }: Props)
           section={sectionTag}
           originalContent={originalContent}
           messageId={messageId}
-          onClose={() => setShowPanel(false)}
+          onClose={safeHandler(() => setShowPanel(false))}
         />
       )}
     </>

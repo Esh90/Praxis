@@ -12,14 +12,17 @@ import { parseHypothesis } from './agents/agent0_parser.js';
 import { runLiteratureQC } from './agents/agent1_qc.js';
 import { generateProtocol } from './agents/agent2_protocol.js';
 import { generateMaterials } from './agents/agent3_materials.js';
-import { generateBudgetTimeline } from './agents/agent4_budget_timeline.js';
+import { generateBudget, generateTimeline } from './agents/agent4_budget_timeline.js';
 import { generateValidation } from './agents/agent5_validation.js';
 
 /**
  * Run the complete Praxis pipeline for a hypothesis
  *
  * @param {string} hypothesis - Raw user hypothesis
- * @param {object} options - { skipQC: bool, skipFeedback: bool }
+ * @param {object} options - { skipQC: bool, skipFeedback: bool, domainHint: string|null }
+ *   - domainHint: user-selected domain slug (e.g. "climate"). Threaded into
+ *     Agent 0 so QC, protocol, materials, budget, and validation all see
+ *     the right domain context — not just the final saved plan.
  * @returns {Promise<object>}
  */
 export async function runPipeline(hypothesis, options = {}) {
@@ -40,7 +43,9 @@ export async function runPipeline(hypothesis, options = {}) {
 
   // ── STAGE 0: Parse Hypothesis ──────────────────────────────────────
   console.log(chalk.yellow('\n[Stage 0] Hypothesis Parser'));
-  const parseResult = await parseHypothesis(hypothesis);
+  const parseResult = await parseHypothesis(hypothesis, {
+    domainHint: options.domainHint || null,
+  });
   result.stages.parse = parseResult;
 
   if (!parseResult.ok) {
@@ -102,22 +107,40 @@ export async function runPipeline(hypothesis, options = {}) {
     );
   }
 
-  // ── STAGE 4: Budget + Timeline (Chain 3) ───────────────────────────
-  console.log(chalk.yellow('\n[Stage 4] Budget + Timeline Generator'));
-  const budgetResult = await generateBudgetTimeline(
+  // ── STAGE 4a: Budget ───────────────────────────────────────────────
+  // Split from timeline so neither JSON gets truncated by the LLM. The
+  // single-call version was occasionally cutting off the timeline
+  // section, leaving the canvas blank.
+  console.log(chalk.yellow('\n[Stage 4a] Budget Generator'));
+  const budgetResult = await generateBudget(
     protocolResult.data,
-    materialsResult.data || { subtotal_usd: 0, materials: [] },
+    materialsResult.data || { subtotal_usd: 500, materials: [] },
     parseResult.data,
-    hypothesis,
   );
-  result.stages.budgetTimeline = budgetResult;
-
+  result.stages.budget = budgetResult;
   if (!budgetResult.ok) {
     result.errors.push({ stage: 'budget', error: budgetResult.error });
-    console.warn(chalk.yellow(`[Stage 4] Warning: ${budgetResult.error}`));
+    console.warn(chalk.yellow(`[Stage 4a] Warning: ${budgetResult.error}`));
+  } else {
+    console.log(chalk.green(`[Stage 4a] ✓ Total: $${budgetResult.data?.budget?.total_usd}`));
+  }
+
+  // ── STAGE 4b: Timeline ─────────────────────────────────────────────
+  console.log(chalk.yellow('\n[Stage 4b] Timeline Generator'));
+  const timelineResult = await generateTimeline(
+    protocolResult.data,
+    materialsResult.data || { subtotal_usd: 500, materials: [] },
+    parseResult.data,
+  );
+  result.stages.timeline = timelineResult;
+  if (!timelineResult.ok) {
+    result.errors.push({ stage: 'timeline', error: timelineResult.error });
+    console.warn(chalk.yellow(`[Stage 4b] Warning: ${timelineResult.error}`));
   } else {
     console.log(
-      chalk.green(`[Stage 4] ✓ Total: $${budgetResult.data.budget?.total_usd} | ${budgetResult.data.timeline?.total_weeks} weeks`),
+      chalk.green(
+        `[Stage 4b] ✓ ${timelineResult.data?.timeline?.total_weeks} weeks, ${timelineResult.data?.timeline?.phases?.length} phases`,
+      ),
     );
   }
 
@@ -148,9 +171,10 @@ export async function runPipeline(hypothesis, options = {}) {
     executive_summary: protocolResult.data.executive_summary,
     protocol: protocolResult.data.protocol,
     materials: materialsResult.data?.materials || [],
+    materials_subtotal: materialsResult.data?.subtotal_usd || 0,
     materials_disclaimer: materialsResult.data?.catalog_disclaimer || '',
     budget: budgetResult.data?.budget || null,
-    timeline: budgetResult.data?.timeline || null,
+    timeline: timelineResult.data?.timeline || null,
     validation: validationResult.data?.validation || null,
   };
 

@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { usePraxisStore, type CanvasTab } from "@/store/usePraxisStore";
+import { safeAsyncHandler, safeHandler } from "@/lib/safeHandler";
 
 const REASONS: { id: string; label: string }[] = [
   { id: "reagent", label: "Incorrect reagent or catalog number" },
@@ -18,6 +19,26 @@ interface Props {
   onClose: () => void;
 }
 
+/**
+ * Defensive toast wrapper so a misconfigured Toaster (or a transient
+ * sonner exception) can never bubble up and unmount the parent tree.
+ */
+function safeToastError(msg: string) {
+  try {
+    toast.error(msg);
+  } catch (err) {
+    console.warn("[praxis] toast.error failed:", err, msg);
+  }
+}
+
+function safeToastSuccess(msg: string) {
+  try {
+    toast.success(msg);
+  } catch (err) {
+    console.warn("[praxis] toast.success failed:", err, msg);
+  }
+}
+
 export function CorrectionPanel({
   section,
   originalContent,
@@ -27,16 +48,41 @@ export function CorrectionPanel({
   const [reasonId, setReasonId] = useState<string>("scientific");
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const submitLock = useRef(false);
   const submit = usePraxisStore((s) => s.submitFeedback);
 
-  async function handleSubmit() {
+  const handleReasonChange = safeHandler((id: string) => {
+    if (REASONS.some((r) => r.id === id)) setReasonId(id);
+  });
+
+  const handleTextChange = safeHandler(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      setText(e.target.value ?? "");
+    },
+  );
+
+  const handleClose = safeHandler(() => {
+    if (!submitting) onClose();
+  });
+
+  const handleSubmit = safeAsyncHandler(async () => {
+    if (submitLock.current || submitting) return;
     if (!text.trim()) {
-      toast.error("Describe the correction so we can learn from it.");
+      safeToastError("Describe the correction so we can learn from it.");
       return;
     }
-    const reasonLabel = REASONS.find((r) => r.id === reasonId)?.label ?? reasonId;
+
+    const reasonLabel =
+      REASONS.find((r) => r.id === reasonId)?.label ?? reasonId;
+
+    submitLock.current = true;
     setSubmitting(true);
     try {
+      // The store's submitFeedback already mirrors to localStorage
+      // first, so any backend failure is recoverable. We still await
+      // so we can show a toast on success — but the await is wrapped
+      // in a try/catch so a thrown rejection cannot escape this
+      // handler and unmount React.
       await submit({
         section,
         rating: 2,
@@ -45,14 +91,18 @@ export function CorrectionPanel({
         originalContent,
         messageId,
       });
-      toast.success("Correction saved — will improve future plans");
+      safeToastSuccess(
+        "Correction saved — click 'Regenerate this section' to apply it.",
+      );
       onClose();
     } catch (err) {
-      toast.error((err as Error).message || "Could not save correction");
+      const msg = (err as Error)?.message || "Could not save correction";
+      safeToastError(msg);
     } finally {
       setSubmitting(false);
+      submitLock.current = false;
     }
-  }
+  }, "Could not save correction");
 
   return (
     <div
@@ -95,7 +145,7 @@ export function CorrectionPanel({
               name={`correction-reason-${section}`}
               value={r.id}
               checked={reasonId === r.id}
-              onChange={() => setReasonId(r.id)}
+              onChange={() => handleReasonChange(r.id)}
             />
             {r.label}
           </label>
@@ -104,8 +154,8 @@ export function CorrectionPanel({
 
       <textarea
         value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder="Describe the correction..."
+        onChange={handleTextChange}
+        placeholder="Describe the correction (e.g. 'price is too high — target $200 total')..."
         rows={3}
         className={cn(
           "mt-3 w-full resize-none rounded-[10px] bg-[var(--bg-elevated)] border",
@@ -118,10 +168,11 @@ export function CorrectionPanel({
       <div className="mt-3 flex items-center justify-end gap-2">
         <button
           type="button"
-          onClick={onClose}
+          onClick={handleClose}
+          disabled={submitting}
           className={cn(
             "rounded-md px-3 py-[6px] text-[12px] text-[var(--text-secondary)]",
-            "hover:bg-[var(--bg-tertiary)] transition-colors",
+            "hover:bg-[var(--bg-tertiary)] transition-colors disabled:opacity-50",
           )}
         >
           Cancel

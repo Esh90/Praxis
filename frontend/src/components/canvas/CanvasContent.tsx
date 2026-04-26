@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { FlaskConical, Sparkles } from "lucide-react";
 import { usePraxisStore, type CanvasTab } from "@/store/usePraxisStore";
 import { ProtocolTab } from "@/components/canvas/tabs/ProtocolTab";
@@ -119,11 +120,29 @@ function PlanHeader() {
           {noveltyMeta.label}
         </span>
         <span className="text-[11px] text-[var(--text-muted)]">
-          Generated {new Date(plan.meta.generated_at).toLocaleString()}
+          Generated <FormattedDateTime iso={plan.meta.generated_at} />
         </span>
       </div>
     </header>
   );
+}
+
+/**
+ * `toLocaleString()` is browser-locale and timezone dependent — the
+ * server's Node runtime and the user's browser will format the same
+ * ISO string differently, which breaks SSR hydration. Render the raw
+ * ISO string until after mount, then swap to the formatted version.
+ */
+function FormattedDateTime({ iso }: { iso: string }) {
+  const [formatted, setFormatted] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      setFormatted(new Date(iso).toLocaleString());
+    } catch {
+      setFormatted(iso);
+    }
+  }, [iso]);
+  return <span suppressHydrationWarning>{formatted ?? iso}</span>;
 }
 
 function noveltyChip(s: "Not Found" | "Similar Exists" | "Exact Match") {

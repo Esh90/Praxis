@@ -20,13 +20,20 @@ export const praxisRouter = Router();
 praxisRouter.post('/generate', async (req, res) => {
   try {
     const hypothesis = String(req.body?.hypothesis || '').trim();
-    const domainUi = String(req.body?.domain || '').trim();
+    // `domain` is no longer used to drive classification — Agent 0
+    // auto-classifies from the hypothesis text. The field is accepted
+    // for backward compatibility with older clients but ignored.
+    const domainUi = String(req.body?.domain || 'Other').trim();
 
     if (!hypothesis) return res.status(400).json({ ok: false, error: 'hypothesis is required' });
-    if (!domainUi) return res.status(400).json({ ok: false, error: 'domain is required' });
+
+    const slug = slugDomainFromUi(domainUi);
 
     const { runPipeline } = await importAgentsOrchestrator();
-    const pipelineResult = await runPipeline(hypothesis, { skipQC: false, skipFeedback: false });
+    const pipelineResult = await runPipeline(hypothesis, {
+      skipQC: false,
+      skipFeedback: false,
+    });
 
     if (!pipelineResult?.finalPlan) {
       return res.status(500).json({
@@ -34,12 +41,6 @@ praxisRouter.post('/generate', async (req, res) => {
         error: 'Pipeline failed before producing a plan',
         pipeline: pipelineResult,
       });
-    }
-
-    // If UI domain differs from parser domain, override parsed domain for downstream consistency.
-    const slug = slugDomainFromUi(domainUi);
-    if (pipelineResult.finalPlan.parsed_hypothesis && slug !== 'other') {
-      pipelineResult.finalPlan.parsed_hypothesis.domain = slug;
     }
 
     const supabase = getSupabaseAdmin();
@@ -98,57 +99,92 @@ praxisRouter.post('/feedback', async (req, res) => {
     const domain = String(req.body?.domain || 'other').trim();
     const reviewer = String(req.body?.reviewer || 'anonymous').trim();
 
-    if (!plan_id) return res.status(400).json({ ok: false, error: 'plan_id is required' });
+    // Minimum viable validation — section + a sane rating. Everything
+    // else is allowed to be empty so we never reject good-faith
+    // feedback (e.g. a thumbs-up has no correction text). Demo
+    // deployments frequently run without Supabase, so plan_id is also
+    // optional now; we still write to the local feedback store so the
+    // agents can pick it up on the next regeneration.
     if (!section) return res.status(400).json({ ok: false, error: 'section is required' });
     if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
       return res.status(400).json({ ok: false, error: 'rating must be 1-5' });
     }
-    if (!original_content) return res.status(400).json({ ok: false, error: 'original_content is required' });
-    if (!correction) return res.status(400).json({ ok: false, error: 'correction is required' });
+
+    const correctionForStore = correction || (rating >= 4 ? 'approved' : '(no correction text provided)');
+    const originalForStore = original_content || '(not captured)';
+
+    let dbId = null;
+    let dbError = null;
 
     const supabase = getSupabaseAdmin();
-    if (!supabase) {
-      return res.status(500).json({ ok: false, error: 'Supabase admin client not configured' });
+    if (supabase && plan_id) {
+      try {
+        const textToEmbed = `${section} ${experiment_type} ${correctionForStore}`;
+        const embedding = await embedText384(textToEmbed);
+
+        const row = {
+          plan_id,
+          reviewer,
+          section,
+          rating,
+          original_content: originalForStore,
+          correction: correctionForStore,
+          correction_reason,
+          experiment_type,
+          domain,
+          embedding,
+        };
+
+        const { data, error } = await supabase
+          .from('plan_feedback')
+          .insert(row)
+          .select('id')
+          .single();
+        if (error) {
+          dbError = error.message;
+        } else {
+          dbId = data?.id || null;
+        }
+      } catch (err) {
+        dbError = err instanceof Error ? err.message : String(err);
+      }
     }
 
-    const textToEmbed = `${section} ${experiment_type} ${correction}`;
-    const embedding = await embedText384(textToEmbed);
-
-    const row = {
-      plan_id,
-      reviewer,
-      section,
-      rating,
-      original_content,
-      correction,
-      correction_reason,
-      experiment_type,
-      domain,
-      embedding,
-    };
-
-    const { data, error } = await supabase.from('plan_feedback').insert(row).select('id').single();
-    if (error) return res.status(500).json({ ok: false, error: error.message });
-
-    // Also append to local agents cache for immediate few-shot retrieval in-process demos.
-    try {
-      const { agentsRoot } = await importAgentsOrchestrator();
-      const feedbackStoreUrl = pathToFileURL(path.join(agentsRoot, 'lib', 'feedbackStore.js')).href;
-      const { addFeedback } = await import(feedbackStoreUrl);
-      await addFeedback({
-        section,
-        domain,
-        experiment_type,
-        original: original_content,
-        correction,
-        reason: correction_reason,
-        rating,
-      });
-    } catch {
-      // optional
+    // Always append to the local agents cache so the next agent run can
+    // pull it as few-shot context. We only skip this for thumbs-up
+    // (rating >= 4) when there is no actual correction text, since
+    // those entries can't teach the model anything.
+    let localStored = false;
+    if (rating <= 3 || correction) {
+      try {
+        const { agentsRoot } = await importAgentsOrchestrator();
+        const feedbackStoreUrl = pathToFileURL(path.join(agentsRoot, 'lib', 'feedbackStore.js')).href;
+        const { addFeedback } = await import(feedbackStoreUrl);
+        await addFeedback({
+          section,
+          domain,
+          experiment_type,
+          original: originalForStore,
+          correction: correctionForStore,
+          reason: correction_reason,
+          rating,
+        });
+        localStored = true;
+      } catch (err) {
+        console.warn('[praxis/feedback] local feedback store unavailable:', err?.message);
+      }
     }
 
-    return res.status(201).json({ ok: true, id: data?.id });
+    if (dbError) {
+      console.warn('[praxis/feedback] Supabase write failed:', dbError);
+    }
+
+    return res.status(201).json({
+      ok: true,
+      id: dbId,
+      local: localStored,
+      db: Boolean(dbId),
+    });
   } catch (err) {
     return res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }
@@ -200,8 +236,9 @@ praxisRouter.post('/chat', async (req, res) => {
       console.warn('[praxis/chat] feedback store unavailable:', e?.message);
     }
 
-    // Re-run just the relevant agent. We re-parse the hypothesis to get
-    // a fresh structured payload, then run the section-specific agent.
+    // Re-run just the relevant agent. Re-parse the hypothesis to get a
+    // fresh structured payload (domain is auto-classified by Agent 0;
+    // the prior plan's domain is no longer threaded back in).
     const parserPath = pathToFileURL(path.join(agentsRoot, 'agents', 'agent0_parser.js')).href;
     const { parseHypothesis } = await import(parserPath);
     const parsed = await parseHypothesis(plan.meta.hypothesis);
@@ -210,10 +247,17 @@ praxisRouter.post('/chat', async (req, res) => {
     let updated = null;
     let summary = '';
 
+    // Forward the user's exact correction message into the agent so it
+    // becomes a hard requirement in the regeneration prompt. This is
+    // what turns "rate price too high → regenerate materials" into a
+    // visibly cheaper materials list (rather than relying purely on
+    // similarity-based feedback retrieval, which can miss).
+    const regenOptions = { regenerationInstruction: message };
+
     if (section === 'protocol') {
       const url = pathToFileURL(path.join(agentsRoot, 'agents', 'agent2_protocol.js')).href;
       const { generateProtocol } = await import(url);
-      const r = await generateProtocol(parsed.data, plan.meta.hypothesis);
+      const r = await generateProtocol(parsed.data, plan.meta.hypothesis, regenOptions);
       if (!r.ok) return res.status(500).json({ ok: false, error: r.error });
       updated = protocolUiFromAgent(r.data?.protocol);
       summary = "I've updated the **protocol** based on your feedback.";
@@ -223,7 +267,7 @@ praxisRouter.post('/chat', async (req, res) => {
       const protoResult = await generateProtocol(parsed.data, plan.meta.hypothesis);
       const matsUrl = pathToFileURL(path.join(agentsRoot, 'agents', 'agent3_materials.js')).href;
       const { generateMaterials } = await import(matsUrl);
-      const r = await generateMaterials(protoResult.data, parsed.data, plan.meta.hypothesis);
+      const r = await generateMaterials(protoResult.data, parsed.data, plan.meta.hypothesis, regenOptions);
       if (!r.ok) return res.status(500).json({ ok: false, error: r.error });
       updated = materialsUiFromAgent(r.data?.materials);
       summary = "I've updated the **materials** list using your latest correction.";
@@ -233,14 +277,14 @@ praxisRouter.post('/chat', async (req, res) => {
       const protoResult = await generateProtocol(parsed.data, plan.meta.hypothesis);
       const matsUrl = pathToFileURL(path.join(agentsRoot, 'agents', 'agent3_materials.js')).href;
       const { generateMaterials } = await import(matsUrl);
-      const matsResult = await generateMaterials(protoResult.data, parsed.data, plan.meta.hypothesis);
+      const matsResult = await generateMaterials(protoResult.data, parsed.data, plan.meta.hypothesis, regenOptions);
       const budUrl = pathToFileURL(path.join(agentsRoot, 'agents', 'agent4_budget_timeline.js')).href;
       const { generateBudgetTimeline } = await import(budUrl);
       const r = await generateBudgetTimeline(
         protoResult.data,
         matsResult.data || { subtotal_usd: 0, materials: [] },
         parsed.data,
-        plan.meta.hypothesis,
+        regenOptions,
       );
       if (!r.ok) return res.status(500).json({ ok: false, error: r.error });
       updated = budgetUiFromAgent(r.data?.budget, matsResult?.data?.subtotal_usd);
@@ -258,7 +302,7 @@ praxisRouter.post('/chat', async (req, res) => {
         protoResult.data,
         matsResult.data || { subtotal_usd: 0, materials: [] },
         parsed.data,
-        plan.meta.hypothesis,
+        regenOptions,
       );
       if (!r.ok) return res.status(500).json({ ok: false, error: r.error });
       updated = timelineUiFromAgent(r.data?.timeline);
@@ -269,7 +313,7 @@ praxisRouter.post('/chat', async (req, res) => {
       const protoResult = await generateProtocol(parsed.data, plan.meta.hypothesis);
       const valUrl = pathToFileURL(path.join(agentsRoot, 'agents', 'agent5_validation.js')).href;
       const { generateValidation } = await import(valUrl);
-      const r = await generateValidation(protoResult.data, parsed.data, plan.meta.hypothesis);
+      const r = await generateValidation(protoResult.data, parsed.data, plan.meta.hypothesis, regenOptions);
       if (!r.ok) return res.status(500).json({ ok: false, error: r.error });
       updated = validationUiFromAgent(r.data?.validation);
       summary = "I've updated the **validation** approach.";

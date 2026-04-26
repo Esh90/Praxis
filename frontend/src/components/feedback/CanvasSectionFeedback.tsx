@@ -4,9 +4,19 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { usePraxisStore, type CanvasTab } from "@/store/usePraxisStore";
 import { CorrectionPanel } from "@/components/feedback/CorrectionPanel";
+import { safeAsyncHandler, safeHandler } from "@/lib/safeHandler";
 
 interface Props {
   section: CanvasTab;
+}
+
+function safeToast(kind: "success" | "error", msg: string) {
+  try {
+    if (kind === "success") toast.success(msg);
+    else toast.error(msg);
+  } catch (err) {
+    console.warn("[praxis] toast call failed:", err, msg);
+  }
 }
 
 export function CanvasSectionFeedback({ section }: Props) {
@@ -17,26 +27,26 @@ export function CanvasSectionFeedback({ section }: Props) {
 
   const originalContent = plan ? sectionSnapshot(plan, section) : "";
 
-  async function up() {
+  const up = safeAsyncHandler(async () => {
     setReaction("up");
     try {
       await submit({
         section,
         rating: 5,
         reason: "Section approved (thumbs up)",
-        correction: "",
+        correction: "approved",
         originalContent,
       });
-      toast.success("Thanks for the signal!");
-    } catch {
-      // soft fail
+      safeToast("success", "Thanks for the signal!");
+    } catch (err) {
+      console.warn("[praxis] thumbs-up submission failed:", err);
     }
-  }
+  }, "Could not record feedback");
 
-  function down() {
+  const down = safeHandler(() => {
     setReaction("down");
     setShowPanel(true);
-  }
+  });
 
   return (
     <div>
@@ -74,7 +84,7 @@ export function CanvasSectionFeedback({ section }: Props) {
         <CorrectionPanel
           section={section}
           originalContent={originalContent}
-          onClose={() => setShowPanel(false)}
+          onClose={safeHandler(() => setShowPanel(false))}
         />
       )}
     </div>
@@ -114,18 +124,23 @@ function sectionSnapshot(
   plan: NonNullable<ReturnType<typeof usePraxisStore.getState>["plan"]>,
   section: CanvasTab,
 ): string {
-  switch (section) {
-    case "protocol":
-      return JSON.stringify(plan.protocol, null, 2);
-    case "materials":
-      return JSON.stringify(plan.materials, null, 2);
-    case "budget":
-      return JSON.stringify(plan.budget, null, 2);
-    case "timeline":
-      return JSON.stringify(plan.timeline, null, 2);
-    case "validation":
-      return JSON.stringify(plan.validation, null, 2);
-    default:
-      return "";
+  try {
+    switch (section) {
+      case "protocol":
+        return JSON.stringify(plan.protocol, null, 2);
+      case "materials":
+        return JSON.stringify(plan.materials, null, 2);
+      case "budget":
+        return JSON.stringify(plan.budget, null, 2);
+      case "timeline":
+        return JSON.stringify(plan.timeline, null, 2);
+      case "validation":
+        return JSON.stringify(plan.validation, null, 2);
+      default:
+        return "";
+    }
+  } catch (err) {
+    console.warn("[praxis] sectionSnapshot serialization failed:", err);
+    return "";
   }
 }

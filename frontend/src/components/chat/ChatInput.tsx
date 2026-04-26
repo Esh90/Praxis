@@ -1,18 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowUp, Lightbulb, X } from "lucide-react";
+import { ArrowUp, Lightbulb, X, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePraxisStore } from "@/store/usePraxisStore";
-import { DOMAINS, type Domain } from "@/lib/praxis-types";
-
-// "Other" is appended to the canonical 4 domains so users can pick freely
-// without us silently inferring one for them.
-type DomainKey = Domain | "Other";
-const DOMAIN_OPTIONS: DomainKey[] = [...DOMAINS, "Other"];
 
 // Sample hypotheses are EXAMPLES, not domain selectors. Clicking one fills
 // the textarea only because the user opted in via the "Examples" row.
-// Picking a domain pill above will NEVER touch the textarea.
-const SAMPLE_HYPOTHESES: { id: string; domain: DomainKey; label: string; text: string }[] = [
+// Domain is ALWAYS auto-detected from the hypothesis content.
+const SAMPLE_HYPOTHESES: { id: string; domain: string; label: string; text: string }[] = [
   {
     id: "gut",
     domain: "Gut Health",
@@ -45,7 +39,11 @@ const SAMPLE_HYPOTHESES: { id: string; domain: DomainKey; label: string; text: s
 
 interface Props {
   variant: "landing" | "panel";
-  /** Landing variant passes the picked domain (or null) as the second arg. */
+  /**
+   * Domain is no longer set by the user — it is always inferred by
+   * Agent 0 from the hypothesis text. The signature still allows a
+   * domain string for backward compatibility with the panel variant.
+   */
   onSubmit: (text: string, domain?: string | null) => void;
   disabled?: boolean;
 }
@@ -53,8 +51,8 @@ interface Props {
 export function ChatInput({ variant, onSubmit, disabled }: Props) {
   const inputValue = usePraxisStore((s) => s.inputValue);
   const setInputValue = usePraxisStore((s) => s.setInputValue);
-  const selectedDomain = usePraxisStore((s) => s.selectedDomain);
-  const setSelectedDomain = usePraxisStore((s) => s.setSelectedDomain);
+  // Read the auto-detected domain (set by the store after Agent 0 returns).
+  const detectedDomain = usePraxisStore((s) => s.selectedDomain);
   const ref = useRef<HTMLTextAreaElement | null>(null);
   const [focused, setFocused] = useState(false);
   const [showExamples, setShowExamples] = useState(false);
@@ -83,23 +81,27 @@ export function ChatInput({ variant, onSubmit, disabled }: Props) {
   function submit() {
     const text = inputValue.trim();
     if (!text || disabled) return;
-    onSubmit(text, variant === "landing" ? selectedDomain : undefined);
+    // Domain is not provided by the user — let Agent 0 classify.
+    onSubmit(text, null);
   }
 
   const placeholder =
     variant === "landing"
-      ? selectedDomain
-        ? `Write your ${selectedDomain.toLowerCase()} hypothesis in your own words...`
-        : "Write your hypothesis in your own words. You can pick a domain below or leave it free-form..."
+      ? "Write your hypothesis in your own words. The AI will classify the domain automatically..."
       : "Ask a follow-up, request changes...";
 
-  // Examples are filtered to the picked domain so the list stays relevant,
-  // but if no domain is picked we show all of them.
-  const visibleSamples = useMemo(() => {
-    if (!selectedDomain || selectedDomain === "Other") return SAMPLE_HYPOTHESES;
-    const f = SAMPLE_HYPOTHESES.filter((s) => s.domain === selectedDomain);
-    return f.length > 0 ? f : SAMPLE_HYPOTHESES;
-  }, [selectedDomain]);
+  // For sample chips on the landing page we always show all 4 examples;
+  // there's no domain filter anymore because there's no dropdown.
+  const visibleSamples = useMemo(() => SAMPLE_HYPOTHESES, []);
+
+  // What to show in the auto-detected domain badge:
+  //   - hidden until the first plan completes (detectedDomain is null)
+  //   - "General Science" if Agent 0 returned "Other"
+  const detectedLabel = useMemo(() => {
+    if (!detectedDomain) return null;
+    if (detectedDomain.toLowerCase() === "other") return "General Science";
+    return detectedDomain;
+  }, [detectedDomain]);
 
   return (
     <div
@@ -160,15 +162,7 @@ export function ChatInput({ variant, onSubmit, disabled }: Props) {
           <kbd className="rounded border border-[var(--border-default)] bg-[var(--bg-secondary)] px-[5px] py-[1px] text-[10px] font-medium text-[var(--text-secondary)]">
             Enter
           </kbd>{" "}
-          to send
-          {variant === "landing" && selectedDomain && (
-            <>
-              {" "}
-              as{" "}
-              <strong className="text-[var(--text-secondary)]">{selectedDomain}</strong>
-            </>
-          )}{" "}
-          ·{" "}
+          to send ·{" "}
           <kbd className="rounded border border-[var(--border-default)] bg-[var(--bg-secondary)] px-[5px] py-[1px] text-[10px] font-medium text-[var(--text-secondary)]">
             Shift
           </kbd>
@@ -190,47 +184,23 @@ export function ChatInput({ variant, onSubmit, disabled }: Props) {
         )}
       </div>
 
-      {/* ─── Domain pills (toggle ONLY, never fills textarea) ───────── */}
-      {variant === "landing" && (
-        <div className="mt-5">
-          <div className="flex items-center justify-center gap-2 mb-2 text-[11px] text-[var(--text-muted)]">
-            <span>
-              Domain (optional) — picking one only tells the AI which catalog to use; it{" "}
-              <strong className="text-[var(--text-secondary)]">won't</strong> write the hypothesis
-              for you.
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            {DOMAIN_OPTIONS.map((d) => {
-              const active = selectedDomain === d;
-              return (
-                <button
-                  key={d}
-                  type="button"
-                  aria-pressed={active ? "true" : "false"}
-                  onClick={() => setSelectedDomain(active ? null : d)}
-                  className={cn(
-                    "rounded-full border px-[14px] py-[6px] text-[13px] transition-all duration-150",
-                    active
-                      ? "border-[var(--accent-primary)] bg-[var(--accent-primary)] text-white shadow-[var(--shadow-sm)]"
-                      : "border-[var(--border-default)] bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:border-[var(--accent-primary)] hover:text-[var(--accent-primary)]",
-                  )}
-                >
-                  {d}
-                </button>
-              );
-            })}
-            {selectedDomain && (
-              <button
-                type="button"
-                onClick={() => setSelectedDomain(null)}
-                aria-label="Clear domain"
-                className="ml-1 inline-flex items-center gap-1 rounded-full border border-dashed border-[var(--border-default)] px-[10px] py-[5px] text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:border-[var(--text-muted)] transition-colors"
-              >
-                <X className="h-[10px] w-[10px]" /> Clear
-              </button>
-            )}
-          </div>
+      {/* ─── Auto-detected domain badge (read-only) ──────────────────── */}
+      {variant === "landing" && detectedLabel && (
+        <div className="mt-5 flex items-center justify-center gap-2">
+          <span className="text-[11px] text-[var(--text-muted)]">Detected domain:</span>
+          <span
+            className="inline-flex items-center gap-[6px] rounded-full border border-[var(--accent-primary)] bg-[var(--accent-subtle)] px-[12px] py-[5px] text-[12px] font-medium text-[var(--accent-primary)]"
+            title="Domain auto-detected from your hypothesis"
+          >
+            <Sparkles className="h-[11px] w-[11px]" strokeWidth={2.4} />
+            {detectedLabel}
+          </span>
+          <span
+            className="text-[10px] text-[var(--text-muted)] cursor-help"
+            title="Domain is auto-detected from hypothesis"
+          >
+            (auto)
+          </span>
         </div>
       )}
 
@@ -263,7 +233,6 @@ export function ChatInput({ variant, onSubmit, disabled }: Props) {
                 title={s.text}
                 onClick={() => {
                   setInputValue(s.text);
-                  if (!selectedDomain) setSelectedDomain(s.domain);
                   ref.current?.focus();
                   setShowExamples(false);
                 }}

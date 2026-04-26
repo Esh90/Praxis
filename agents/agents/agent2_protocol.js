@@ -63,7 +63,7 @@ OUTPUT SCHEMA:
   }
 }`;
 
-export async function generateProtocol(parsedHypothesis, hypothesis) {
+export async function generateProtocol(parsedHypothesis, hypothesis, options = {}) {
   console.log('\n[Agent 2] Generating protocol...');
 
   // Fetch relevant scientist corrections for few-shot injection (stretch goal)
@@ -74,7 +74,18 @@ export async function generateProtocol(parsedHypothesis, hypothesis) {
     console.log(`[Agent 2] Injecting ${corrections.length} scientist correction(s) as few-shot context`);
   }
 
-  const userContent = `${fewShotBlock}Generate a complete experimental protocol for this hypothesis:
+  const regenBlock = options.regenerationInstruction
+    ? [
+        '',
+        '═══ USER REGENERATION REQUEST — APPLY THIS NOW ═══',
+        String(options.regenerationInstruction).trim(),
+        'Apply this correction in the protocol you generate next.',
+        '═══════════════════════════════════════════════════════',
+        '',
+      ].join('\n')
+    : '';
+
+  const userContent = `${fewShotBlock}${regenBlock}Generate a complete experimental protocol for this hypothesis:
 
 Hypothesis: "${hypothesis}"
 

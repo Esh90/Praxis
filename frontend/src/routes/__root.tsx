@@ -1,7 +1,8 @@
+import { useEffect } from "react";
 import { Outlet, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
 import appCss from "../styles.css?url";
 import { Toaster } from "@/components/ui/sonner";
-import { ThemeProvider } from "@/lib/theme";
+import { ErrorBoundary } from "@/components/util/ErrorBoundary";
 
 function NotFoundComponent() {
   return (
@@ -38,6 +39,7 @@ export const Route = createRootRoute({
     ],
     links: [
       { rel: "stylesheet", href: appCss },
+      { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
@@ -52,9 +54,75 @@ export const Route = createRootRoute({
   notFoundComponent: NotFoundComponent,
 });
 
+/**
+ * Install global window-level error shields.
+ *
+ * Why this matters: Radix UI portals (DropdownMenu, Select, Popover,
+ * Dialog) render into document.body. When a handler inside one of
+ * them throws synchronously OR rejects an unhandled promise, the
+ * exception escapes the React fiber tree by way of the portal's
+ * logical parent. In React 18/19 concurrent mode this can cascade
+ * into a full root unmount — the user sees a black/white screen
+ * because only the body background is left.
+ *
+ * Stopping these at the window level is the *last* line of defence
+ * (every handler is also wrapped in `safeHandler`). Without it, a
+ * single unhandled promise rejection from a feedback POST is enough
+ * to wipe the UI on every demo.
+ */
+function useGlobalErrorShields() {
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    type Holder = { __lastPraxisError__?: unknown; __PRAXIS_DEBUG__?: boolean };
+    const holder = window as unknown as Holder;
+    holder.__PRAXIS_DEBUG__ = true;
+
+    const onError = (event: ErrorEvent) => {
+      console.error("[Praxis] uncaught global error:", event.error ?? event.message);
+      holder.__lastPraxisError__ = {
+        message: event.message,
+        stack: event.error?.stack,
+        timestamp: Date.now(),
+      };
+    };
+
+    const onRejection = (event: PromiseRejectionEvent) => {
+      console.error("[Praxis] unhandled promise rejection:", event.reason);
+      holder.__lastPraxisError__ = {
+        message:
+          event.reason instanceof Error
+            ? event.reason.message
+            : String(event.reason),
+        stack: event.reason?.stack,
+        timestamp: Date.now(),
+      };
+      // CRITICAL: prevent unhandled rejections from ever crashing React.
+      event.preventDefault();
+    };
+
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
+  }, []);
+}
+
 function RootRoute() {
+  useGlobalErrorShields();
+
+  // We deliberately DO NOT wrap children in <ThemeProvider> any more.
+  // That provider used to inject a theme state branch that differed
+  // between SSR ("light") and the first client render (whatever the
+  // user had stored), causing a hydration mismatch on every
+  // theme-dependent attribute below it. The pre-hydration inline
+  // script in <RootShell> is now the single source of truth: it sets
+  // `<html class="dark">` before React mounts, and components read
+  // that class directly when they need to be theme-aware.
   return (
-    <ThemeProvider defaultTheme="light">
+    <ErrorBoundary>
       <Outlet />
       <Toaster
         position="bottom-center"
@@ -69,34 +137,47 @@ function RootRoute() {
           },
         }}
       />
-    </ThemeProvider>
+    </ErrorBoundary>
   );
 }
 
 function RootShell({ children }: { children: React.ReactNode }) {
-  // Inline pre-hydration script avoids a flash of light before the user's
-  // saved theme is applied.
+  // Inline pre-hydration script. This MUST run before any React
+  // bundle parses, otherwise React's hydration sees the server's
+  // light-mode HTML and the user's saved dark-mode preference
+  // disagree (which is exactly the crash we just fixed).
+  //
+  // The script sets `class="dark"` on `<html>` based on:
+  //   1. `localStorage.praxis-theme` if explicitly set
+  //   2. otherwise OS `prefers-color-scheme: dark`
+  //   3. otherwise leaves it as light (no class added)
   const themeScript = `
     (function () {
       try {
         var stored = localStorage.getItem('praxis-theme');
-        var theme = stored || 'light';
-        if (theme === 'dark') {
-          document.documentElement.classList.add('dark');
-        } else if (theme === 'system') {
-          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-          if (prefersDark) document.documentElement.classList.add('dark');
-        }
+        var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        var theme = (stored === 'dark' || stored === 'light')
+          ? stored
+          : (prefersDark ? 'dark' : 'light');
+        if (theme === 'dark') document.documentElement.classList.add('dark');
+        else document.documentElement.classList.remove('dark');
       } catch (e) {}
     })();
   `;
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body>
+      {/* suppressHydrationWarning on <body> tells React to silently
+         patch any attribute differences (extensions like ColorZilla,
+         Dark Reader, Grammarly inject inline styles into <body>
+         after page load, and the pre-hydration theme class change
+         can technically be observed here too). Without this flag,
+         a single mismatched attribute forces a full subtree
+         reconciliation that has historically unmounted the root. */}
+      <body suppressHydrationWarning>
         {children}
         <Scripts />
       </body>

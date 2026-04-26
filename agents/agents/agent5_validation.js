@@ -36,13 +36,24 @@ OUTPUT SCHEMA:
   }
 }`;
 
-export async function generateValidation(protocolData, parsedHypothesis, hypothesis) {
+export async function generateValidation(protocolData, parsedHypothesis, hypothesis, options = {}) {
   console.log('\n[Agent 5] Generating validation approach...');
 
   const corrections = await getRelevantFeedback(hypothesis, parsedHypothesis.domain, 'validation', 2);
   const fewShotBlock = buildFewShotBlock(corrections);
 
-  const userContent = `${fewShotBlock}Generate the validation approach for this experiment.
+  const regenBlock = options.regenerationInstruction
+    ? [
+        '',
+        '═══ USER REGENERATION REQUEST — APPLY THIS NOW ═══',
+        String(options.regenerationInstruction).trim(),
+        'Apply this correction in the validation approach you generate next.',
+        '═══════════════════════════════════════════════════════',
+        '',
+      ].join('\n')
+    : '';
+
+  const userContent = `${fewShotBlock}${regenBlock}Generate the validation approach for this experiment.
 
 Hypothesis: "${hypothesis}"
 Intervention: ${parsedHypothesis.intervention}

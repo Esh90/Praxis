@@ -119,10 +119,32 @@ export function materialsUiFromAgent(materialsArr) {
 }
 
 export function budgetUiFromAgent(budgetObj, materialsSubtotal) {
-  const labor = Number(budgetObj?.labor_estimate_usd || 0) || 0;
-  const materials = Number(budgetObj?.materials_subtotal ?? materialsSubtotal ?? 0) || 0;
-  const contingency = Number(budgetObj?.contingency_usd || 0) || 0;
-  const grand = Number(budgetObj?.total_usd || labor + materials + contingency) || labor + materials + contingency;
+  const labor = Math.max(0, Number(budgetObj?.labor_estimate_usd || 0) || 0);
+  const equipment = Math.max(0, Number(budgetObj?.equipment_access_usd || 0) || 0);
+  // Always trust the upstream materials subtotal (Agent 3) over whatever
+  // the budget LLM put in budgetObj.materials_subtotal — the latter is
+  // frequently hallucinated. Fall back only if Agent 3 didn't produce one.
+  const authoritativeMaterials = Number(materialsSubtotal);
+  const materials = Number.isFinite(authoritativeMaterials) && authoritativeMaterials > 0
+    ? authoritativeMaterials
+    : Math.max(0, Number(budgetObj?.materials_subtotal || 0) || 0);
+
+  const computedBase = labor + materials + equipment;
+  const contingencyFromObj = Number(budgetObj?.contingency_usd);
+  const contingency = Number.isFinite(contingencyFromObj) && contingencyFromObj > 0
+    ? contingencyFromObj
+    : Math.round(computedBase * 0.15);
+
+  const reportedTotal = Number(budgetObj?.total_usd);
+  const computedTotal = computedBase + contingency;
+  // Reject a reported total if it's clearly bogus — e.g. $1 when materials
+  // alone are $1,800 — and fall back to the derived sum. We accept the
+  // LLM-provided total only when it's at least 60% of the line-item floor.
+  const grand =
+    Number.isFinite(reportedTotal) && reportedTotal >= computedBase * 0.6
+      ? reportedTotal
+      : computedTotal;
+
   return {
     labor,
     materials,
@@ -170,7 +192,10 @@ export function buildPraxisPlanUi({ hypothesis, domainUi, pipelineResult, planId
   const parsed = fp?.parsed_hypothesis || {};
   const qc = fp?.novelty || pipelineResult?.stages?.qc?.data || null;
 
-  const domainSlug = slugDomainFromUi(domainUi) !== 'other' ? slugDomainFromUi(domainUi) : parsed.domain;
+  // ALWAYS prefer the Agent-0 inferred domain — `domainUi` is now just a
+  // legacy passthrough from older clients and should never override the
+  // model's classification.
+  const domainSlug = parsed.domain || slugDomainFromUi(domainUi);
   const domainForUi = uiDomainFromSlug(domainSlug);
 
   return {

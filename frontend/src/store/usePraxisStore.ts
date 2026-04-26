@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import type { PraxisPlan } from "@/lib/praxis-types";
 import { generatePlan, sendChatTurn, submitFeedbackApi } from "@/lib/api";
+import {
+  appendLocalFeedback,
+  buildRegenerationInstruction,
+  type LocalFeedbackEntry,
+} from "@/lib/feedbackLocal";
 
 export type PipelineStatus =
   | "idle"
@@ -59,8 +64,12 @@ interface PraxisState {
   pipelineError: string | null;
 
   hypothesis: string;
-  /** Domain explicitly chosen by the user on the landing screen. Falls back to
-   * heuristic inference when the user doesn't pick one. */
+  /**
+   * Auto-detected domain from Agent 0. Set AFTER the plan returns —
+   * never manually picked by the user. The ChatInput renders this as a
+   * read-only badge so the user can see how the AI classified their
+   * hypothesis.
+   */
   selectedDomain: string | null;
   plan: PraxisPlan | null;
   populatedTabs: Set<CanvasTab>;
@@ -95,6 +104,44 @@ interface PraxisState {
 
 function uid() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Make sure budget totals are internally consistent before we render.
+ * Materials subtotal must equal the sum of line items, and budget total
+ * must equal materials + labor + equipment + 15% contingency. The
+ * agents already enforce this server-side, but a final defensive pass
+ * here means the canvas can never display $0 totals or a budget total
+ * smaller than its materials subtotal.
+ */
+function validatePlanConsistency(plan: PraxisPlan): PraxisPlan {
+  if (!plan?.budget || !plan?.materials) return plan;
+
+  const next: PraxisPlan = { ...plan, budget: { ...plan.budget } };
+
+  // Recalculate materials subtotal from actual line items
+  const actualSubtotal = plan.materials.reduce(
+    (sum, m) => sum + (Number(m.cost) || 0),
+    0,
+  );
+
+  if (actualSubtotal > 0) {
+    next.budget.materials = Math.round(actualSubtotal * 100) / 100;
+  }
+
+  const labor = Number(next.budget.labor) || 0;
+  const equipment = Number(next.budget.equipment) || 0;
+  const materials = Number(next.budget.materials) || 0;
+  const base = materials + labor + equipment;
+  next.budget.contingency = Math.round(base * 0.15);
+  next.budget.grand_total = Math.round(base + next.budget.contingency);
+
+  // Materials must never exceed total — if it does, scale total up 1.55x
+  if (next.budget.materials > next.budget.grand_total) {
+    next.budget.grand_total = Math.round(next.budget.materials * 1.55);
+  }
+
+  return next;
 }
 
 const STEP_SEQUENCE_QC: { id: string; label: string; minMs: number }[] = [
@@ -196,16 +243,17 @@ export const usePraxisStore = create<PraxisState>((set, get) => ({
   // multi-stage agent run. The plan stays hidden until user clicks
   // "Generate Experiment Plan".
   // ─────────────────────────────────────────────────────────────────
-  submitHypothesis: async (hypothesis: string, domain?: string | null) => {
+  submitHypothesis: async (hypothesis: string, _domain?: string | null) => {
     if (!hypothesis.trim()) return;
 
     const userMsgId = uid();
     const statusMsgId = uid();
-    const domainOverride = domain ?? get().selectedDomain;
 
     set((state) => ({
       hypothesis,
-      selectedDomain: domainOverride ?? state.selectedDomain,
+      // Reset any previously-detected domain — it'll be repopulated
+      // from plan.meta.domain once Agent 0 has classified.
+      selectedDomain: null,
       isActive: true,
       pipelineStatus: "qc",
       pipelineStartTime: Date.now(),
@@ -224,7 +272,6 @@ export const usePraxisStore = create<PraxisState>((set, get) => ({
       populatedTabs: new Set<CanvasTab>(),
     }));
 
-    // Animate the QC step sequence while the network call runs
     const stagedQC = (async () => {
       for (const step of STEP_SEQUENCE_QC) {
         const t0 = Date.now();
@@ -240,15 +287,17 @@ export const usePraxisStore = create<PraxisState>((set, get) => ({
     })();
 
     try {
-      const [plan] = await Promise.all([
-        generatePlan(hypothesis, domainOverride ?? undefined),
+      const [rawPlan] = await Promise.all([
+        generatePlan(hypothesis, null),
         stagedQC,
       ]);
 
-      // Persist plan but mark canvas as not yet populated — we wait
-      // for the user to click Generate.
+      const plan = validatePlanConsistency(rawPlan);
+
       set((state) => ({
         plan,
+        // Display the auto-detected domain in the read-only badge.
+        selectedDomain: plan?.meta?.domain ?? null,
         showQCResult: true,
         showGenerateCTA: true,
         pipelineStatus: "awaiting_generate",
@@ -323,13 +372,11 @@ export const usePraxisStore = create<PraxisState>((set, get) => ({
         set((s) => {
           const next = new Set(s.populatedTabs);
           next.add(step.tab as CanvasTab);
-          // Auto-switch to first tab; let the user navigate from there
-          const activeTab = next.size === 1 && step.tab === "protocol" ? "protocol" : s.activeTab;
-          // Materials → switch to materials only if user is still on protocol (user-controlled afterwards)
-          let nextActive = activeTab;
-          if (step.tab === "materials" && s.activeTab === "protocol" && s.populatedTabs.size <= 1) {
-            nextActive = "materials";
-          }
+          // Lock the canvas to the Protocol tab the moment it's ready and
+          // never auto-advance afterwards. The user explicitly controls
+          // navigation between tabs from this point on.
+          const isFirstProtocol = step.tab === "protocol" && !s.populatedTabs.has("protocol");
+          const nextActive = isFirstProtocol ? "protocol" : s.activeTab;
           return { populatedTabs: next, activeTab: nextActive };
         });
       }
@@ -407,7 +454,7 @@ export const usePraxisStore = create<PraxisState>((set, get) => ({
 
         return {
           previousPlanSnapshot: previousSnapshot,
-          plan: next,
+          plan: validatePlanConsistency(next),
           recentlyUpdatedTabs: updatedTabs,
           activeTab: section ?? s.activeTab,
           pipelineStatus: "complete",
@@ -442,22 +489,92 @@ export const usePraxisStore = create<PraxisState>((set, get) => ({
   },
 
   submitFeedback: async (payload: FeedbackPayload) => {
-    const { plan } = get();
-    if (!plan) return;
-    await submitFeedbackApi({
-      ...payload,
-      planId: plan.meta.plan_id ?? null,
-      domainUi: plan.meta.domain,
-      experimentType: payload.experimentType ?? plan.meta.experiment_type,
-    });
+    // Total-safety: this action is invoked from Radix portal handlers
+    // (DropdownMenu items, toast actions). A throw here used to escape
+    // the portal, propagate past the ErrorBoundary, and unmount the
+    // entire React root. EVERY branch below is wrapped so the
+    // function can never reject or throw.
+    try {
+      if (!payload || typeof payload !== "object") {
+        console.warn("[praxis] submitFeedback called with invalid payload");
+        return;
+      }
+      const { plan } = get();
+      if (!plan) return;
+
+      // Step 1: mirror to the browser-local ledger first so the next
+      // regeneration can use it even if the backend is unreachable.
+      try {
+        appendLocalFeedback({
+          section: payload.section,
+          rating: payload.rating,
+          reason: payload.reason,
+          correction: payload.correction,
+          originalContent: payload.originalContent,
+          domainUi: plan.meta.domain,
+          experimentType: payload.experimentType ?? plan.meta.experiment_type,
+          hypothesis: plan.meta.hypothesis,
+          planId: plan.meta.plan_id ?? null,
+        } satisfies Omit<LocalFeedbackEntry, "id" | "timestamp">);
+      } catch (err) {
+        // localStorage might be disabled (private mode); fail soft.
+        console.warn("[praxis] local feedback append failed:", err);
+      }
+
+      // Step 2: best-effort backend persistence — completely
+      // fire-and-forget. We don't await it; even a synchronous throw
+      // before the first await inside submitFeedbackApi cannot crash
+      // the caller because the IIFE traps everything.
+      void (async () => {
+        try {
+          await submitFeedbackApi({
+            ...payload,
+            planId: plan.meta.plan_id ?? null,
+            domainUi: plan.meta.domain,
+            experimentType: payload.experimentType ?? plan.meta.experiment_type,
+          });
+        } catch (err) {
+          console.warn(
+            "[praxis] feedback backend write failed (kept local):",
+            err,
+          );
+        }
+      })();
+    } catch (err) {
+      // Catch-all so this action never rejects.
+      console.error("[praxis] submitFeedback unexpected error:", err);
+    }
   },
 
   regenerateSection: async (section: CanvasTab) => {
-    const state = get();
-    if (!state.plan) return;
-    await state.submitFollowUp(
-      `Regenerate the ${section} section using my latest corrections.`,
-    );
+    try {
+      const state = get();
+      if (!state.plan) return;
+
+      // Pull the user's latest feedback for this section and bake it
+      // straight into the regeneration message. The backend /chat route
+      // forwards this to the agent, and the agents already do an
+      // additional feedback-store lookup, so corrections are applied
+      // both ways.
+      let instruction = "";
+      try {
+        instruction = buildRegenerationInstruction(section);
+      } catch (err) {
+        console.warn("[praxis] buildRegenerationInstruction failed:", err);
+      }
+
+      const message = instruction
+        ? `Regenerate the ${section} section.\n\n${instruction}`
+        : `Regenerate the ${section} section using my latest corrections.`;
+
+      try {
+        await state.submitFollowUp(message);
+      } catch (err) {
+        console.error("[praxis] regenerateSection submitFollowUp failed:", err);
+      }
+    } catch (err) {
+      console.error("[praxis] regenerateSection unexpected error:", err);
+    }
   },
 
   dismissDiff: (section) =>
